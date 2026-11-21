@@ -1,0 +1,90 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1794465935949,
+      "tag": "0000_aberrant_franklin_richards",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794486544329,
+      "tag": "0001_amused_baron_zemo",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794504246894,
+      "tag": "0002_stale_human_fly",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794505394058,
+      "tag": "0003_majestic_wasp",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794505751814,
+      "tag": "0004_skinny_sharon_carter",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794506471223,
+      "tag": "0005_quiet_impossible_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794548852029,
+      "tag": "0006_gray_war_machine",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794549114044,
+      "tag": "0007_wide_purple_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794586087869,
+      "tag": "0008_cool_emma_frost",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794642492293,
+      "tag": "0009_silly_black_cat",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794682660176,
+      "tag": "0010_sticky_mojo",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794682844543,
+      "tag": "0011_plain_random",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+export type Customer = {
+  id: number;
+  type: 'individual' | 'company';
+  displayName: string;
+  phone: string;
+  email: string;
+  inn: string;
+  isBlocked: boolean;
+  blockedReason: string;
+  version: number;
+  details: Record<string, string>;
+  documentReadiness: { ready: boolean; missing: string[] };
+};
+export type Vehicle = {
+  id: number;
+  modelId: number;
+  brandName: string;
+  modelName: string;
+  pricingGroupName: string;
+  pricingGroupId: number;
+  note: string;
+  plate: string;
+  vin: string | null;
+  year: number;
+  bodyType: string;
+  transmission: 'automatic' | 'manual' | null;
+  currentMileageKm: number | null;
+  nextMaintenanceDueKm: number | null;
+  isReady: boolean;
+  readinessReason: string;
+  needsWash: boolean;
+  issueNotes: string;
+  archivedAt: string | null;
+  version: number;
+  tankLiters: number;
+};
+export type Model = {
+  id: number;
+  name: string;
+  brandId: number;
+  brandName: string;
+  pricingGroupName: string;
+};

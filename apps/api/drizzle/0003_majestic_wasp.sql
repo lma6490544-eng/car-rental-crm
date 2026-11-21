@@ -1,0 +1,2 @@
+ALTER TABLE "vehicles" ADD COLUMN "transmission" text;--> statement-breakpoint
+ALTER TABLE "vehicles" ADD CONSTRAINT "vehicle_transmission" CHECK (transmission IS NULL OR transmission IN ('automatic','manual'));

@@ -1,0 +1,24 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.runtime/
+
+.local/
+
+# Local measurements, imports and diagnostic artifacts
+outputs/
+
+# Generated checks and browser reports
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Local Excel reports
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb

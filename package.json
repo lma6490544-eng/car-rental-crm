@@ -1,0 +1,48 @@
+{
+  "name": "car-rental-crm",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"npm run dev -w @crm/api\" \"npm run dev -w @crm/web\"",
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:generate": "npm run db:generate -w @crm/api",
+    "db:migrate": "npm run db:migrate -w @crm/api",
+    "test:stage1": "npm run build -w @crm/api && npm run test:integration -w @crm/api",
+    "admin:create": "npm run build -w @crm/api && npm run admin:create -w @crm/api",
+    "test:browser": "npm run build -w @crm/api && npm run test:browser -w @crm/web",
+    "db:seed:stage2": "npm run build -w @crm/api && node apps/api/dist/catalog/seed.js --demo",
+    "test:stage2": "npm run build -w @crm/api && node --test apps/api/tests/stage2.acceptance.cjs",
+    "test:ids": "npm run build -w @crm/api && node --test apps/api/tests/numeric-ids.cjs",
+    "test:stage3": "npm run build -w @crm/api && node --test apps/api/tests/pricing.unit.cjs apps/api/tests/stage3.acceptance.cjs",
+    "test:stage5": "npm run build -w @crm/api && node --test apps/api/tests/stage5.acceptance.cjs",
+    "test:stage4": "npm run build -w @crm/api && node --test apps/api/tests/availability.unit.cjs apps/api/tests/stage4.acceptance.cjs",
+    "format": "prettier --write \"apps/**/*.{ts,tsx,js,cjs,mjs,json,css,html}\" \"packages/**/*.{ts,tsx,js,cjs,mjs,json,css,html}\" \"*.{json,mjs}\" \"scripts/**/*.cjs\" --no-error-on-unmatched-pattern",
+    "format:check": "prettier --check \"apps/**/*.{ts,tsx,js,cjs,mjs,json,css,html}\" \"packages/**/*.{ts,tsx,js,cjs,mjs,json,css,html}\" \"*.{json,mjs}\" \"scripts/**/*.cjs\" --no-error-on-unmatched-pattern",
+    "format:web": "prettier --write \"apps/web/src/**/*.{ts,tsx}\" apps/web/vite.config.ts",
+    "format:check:web": "prettier --check \"apps/web/src/**/*.{ts,tsx}\" apps/web/vite.config.ts",
+    "lint": "eslint apps/web/src apps/web/vite.config.ts apps/api/src apps/api/drizzle.config.ts --max-warnings 0",
+    "lint:web": "eslint apps/web/src apps/web/vite.config.ts --max-warnings 0",
+    "lint:api": "eslint apps/api/src apps/api/drizzle.config.ts --max-warnings 0",
+    "check": "npm run format:check && npm run lint && npm run typecheck",
+    "test": "npm run build -w @crm/api && node scripts/run-tests.cjs all",
+    "test:api": "npm run build -w @crm/api && node scripts/run-tests.cjs api",
+    "test:web": "npm run build -w @crm/api && node scripts/run-tests.cjs web",
+    "test:clients": "node --test apps/web/tests/clients.browser.cjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "eslint": "^9.39.5",
+    "prettier": "^3.10.1",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.73.0"
+  }
+}

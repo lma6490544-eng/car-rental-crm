@@ -1,0 +1,76 @@
+{
+  "response": {
+    "id": 6,
+    "customer_id": 5,
+    "status": "cancelled",
+    "version": 2,
+    "start_at": "2044-01-01T07:00:00.000Z",
+    "end_at": "2044-01-03T07:00:00.000Z",
+    "target_type": "model",
+    "target_vehicle_id": null,
+    "target_model_id": 1,
+    "target_brand_id": null,
+    "target_group_id": null,
+    "created_by": 1,
+    "created_at": "<time>",
+    "updated_at": "<time>"
+  },
+  "retry": {
+    "id": 6,
+    "end_at": "2044-01-03T07:00:00.000Z",
+    "status": "cancelled",
+    "version": 2,
+    "start_at": "2044-01-01T07:00:00.000Z",
+    "created_at": "<time>",
+    "created_by": 1,
+    "updated_at": "<time>",
+    "customer_id": 5,
+    "target_type": "model",
+    "target_brand_id": null,
+    "target_group_id": null,
+    "target_model_id": 1,
+    "target_vehicle_id": null
+  },
+  "assignments": [
+    {
+      "id": 8,
+      "vehicle_id": 1,
+      "booking_id": 6,
+      "kind": "assignment",
+      "start_at": "2044-01-01T07:00:00.000Z",
+      "end_at": "2044-01-03T07:00:00.000Z",
+      "reason": "Проверка отмены",
+      "retired_at": "<time>",
+      "version": 1,
+      "created_by": 1,
+      "created_at": "<time>"
+    }
+  ],
+  "audit": [
+    {
+      "action": "bookings.cancelled",
+      "details": {
+        "reason": "Отмена клиентом"
+      }
+    },
+    {
+      "action": "bookings.created",
+      "details": {
+        "reason": "Проверка отмены",
+        "quoteId": 4
+      }
+    }
+  ],
+  "outbox": [
+    {
+      "business_key": "bookings.cancelled:6:2",
+      "kind": "bookings.cancelled",
+      "payload": {
+        "id": 6,
+        "version": 2
+      }
+    }
+  ],
+  "financeUnchanged": true,
+  "calendarIds": []
+}

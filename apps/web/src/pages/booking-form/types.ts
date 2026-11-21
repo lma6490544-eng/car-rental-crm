@@ -1,0 +1,44 @@
+import type { Customer } from '../../catalog';
+import type { Calculation, CommandResult } from '../../contracts';
+export type ActionProps = {
+  path: string;
+  command: string;
+  body: () => unknown;
+  label: string;
+  onDone: (result: CommandResult) => void;
+  disabled?: boolean;
+  revision?: string;
+  riskLabel?: string;
+  onAvailabilityChanged?: () => void;
+};
+export type BookingInitial = {
+  target?: string;
+  calculation?: Calculation;
+  start?: string;
+  vehicleId?: number;
+  customerId?: number;
+  bookingId?: number;
+  version?: number;
+};
+export type BookingFormValues = {
+  type?: Customer['type'];
+  displayName?: string;
+  phone?: string;
+  email?: string;
+  inn?: string;
+  details?: Record<string, string>;
+  start: string;
+  days: number;
+  package: number;
+  vehicleId?: number;
+  modelId?: number;
+  brandId?: number;
+  advancedTarget?: string;
+  custom?: string;
+  discount?: string;
+  discountMode?: string;
+  limit?: number | null;
+  loyaltyReason?: string;
+  freeDays?: string;
+  unassignedReason?: string;
+};

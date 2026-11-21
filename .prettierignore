@@ -1,0 +1,14 @@
+**/node_modules/
+**/dist/
+**/coverage/
+**/drizzle/
+**/migrations/
+**/build/
+**/generated/
+**/*.generated.*
+.git/
+.runtime/
+.local/
+outputs/
+package-lock.json
+**/*.tsbuildinfo
