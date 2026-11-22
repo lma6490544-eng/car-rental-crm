@@ -48,7 +48,12 @@ export class CustomersController {
     if (!rows[0]) fail(404, 'NOT_FOUND', 'Клиент не найден.');
     return {
       ...rows[0],
-      documentReadiness: documentReadiness(rows[0].type, rows[0].details, rows[0].inn),
+      documentReadiness: documentReadiness(
+        rows[0].type,
+        rows[0].details,
+        rows[0].inn,
+        rows[0].phone,
+      ),
     };
   }
   @Get(':id/history') history(@Param('id') raw: string, @Query() query: unknown) {

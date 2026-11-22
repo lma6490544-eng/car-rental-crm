@@ -36,9 +36,15 @@ export function buildBookingCommand(
     reason:
       clean(v.unassignedReason) ||
       (initial?.bookingId ? 'Редактирование условий брони' : 'Создание брони'),
-    customer: selected
-      ? { existingId: selected.id, expectedVersion: selected.version, data }
-      : { new: data },
+    ...(initial?.termsOnly
+      ? initial.vehicleId && target?.type !== 'vehicle'
+        ? { vehicleId: initial.vehicleId }
+        : {}
+      : {
+          customer: selected
+            ? { existingId: selected.id, expectedVersion: selected.version, data }
+            : { new: data },
+        }),
     ...(warning
       ? {
           riskAcceptance: {

@@ -6,9 +6,9 @@ import { useBookingCustomer } from './useBookingCustomer';
 import { buildBookingDraft, clean } from './bookingDraft';
 import { useBookingPreview } from './useBookingPreview';
 import type { BookingOptions, CommandResult } from '../../contracts';
-import { useEffect, useState } from 'react';
+import { useEffect, useImperativeHandle, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode, Ref } from 'react';
 import {
   Alert,
   AutoComplete,
@@ -32,9 +32,25 @@ import {
 import dayjs from 'dayjs';
 import { usePolling } from '../../catalog';
 import { normalizePhone, PhoneInput, phoneRules } from '../../formats';
-import { identityLabels, companyLabels } from '../clients/customer-fields';
+import { identityLabels, companyLabels } from '../../features/customers/customer-fields';
 import { ConflictList } from '../../features/booking/Conflicts';
 import { compactVehicleOption } from '../../features/vehicles/CompactVehicleOption';
+import { RentalPriceInfo } from '../../features/booking/RentalPriceInfo';
+import { rub } from '../../shared/formatters';
+
+const rentalDayPlural = new Intl.PluralRules('ru-RU');
+const rentalDayLabels = {
+  one: 'день',
+  few: 'дня',
+  many: 'дней',
+  other: 'дня',
+  two: 'дня',
+  zero: 'дней',
+};
+const contractDurationOptions = Array.from({ length: 3660 }, (_, index) => {
+  const days = index + 1;
+  return { value: days, label: `${days} ${rentalDayLabels[rentalDayPlural.select(days)]}` };
+});
 
 function RentalDateInput({
   value,
@@ -53,23 +69,45 @@ function RentalDateInput({
     />
   );
 }
+export type BookingTermsForm = {
+  buildBody: () => ReturnType<typeof buildBookingCommand> | undefined;
+  refreshAvailability: () => void;
+};
+
+type BookingFormAction =
+  | {
+      Action: ComponentType<ActionProps>;
+      onDone: (result: CommandResult) => void;
+      termsRef?: never;
+    }
+  | { termsRef: Ref<BookingTermsForm>; Action?: never; onDone?: never };
+
 export default function BookingForm({
   initial,
   onDone,
   Action,
   footerContainer,
+  onTermsDirtyChange,
+  onTermsReadyChange,
+  termsRef,
+  contractDeposit,
+  disabled = false,
 }: {
   initial?: BookingInitial;
-  onDone: (result: CommandResult) => void;
-  Action: ComponentType<ActionProps>;
   footerContainer?: HTMLElement | null;
-}) {
+  onTermsDirtyChange?: (dirty: boolean) => void;
+  onTermsReadyChange?: (ready: boolean) => void;
+  contractDeposit?: ReactNode;
+  disabled?: boolean;
+} & BookingFormAction) {
   const { token } = theme.useToken();
+  const [termsTouched, setTermsTouched] = useState(false);
   const [fieldsValid, setFieldsValid] = useState(false);
   const [form] = Form.useForm<BookingFormValues>(),
     values: BookingFormValues = Form.useWatch([], form) ?? {};
-  const options = usePolling<BookingOptions>('/booking-options');
-  const customer = useBookingCustomer(form, initial?.customerId);
+  const termsOnly = !!initial?.termsOnly;
+  const options = usePolling<BookingOptions>(termsOnly ? undefined : '/booking-options');
+  const customer = useBookingCustomer(form, termsOnly ? undefined : initial?.customerId);
   const {
     selected,
     selecting,
@@ -117,6 +155,24 @@ export default function BookingForm({
     loyaltyReason: calculation?.overrides?.reason ?? calculation?.nonBillableDays?.[0]?.reason,
     freeDays: calculation?.nonBillableDays?.map((d) => d.dayIndex).join(','),
   };
+  const termsDirty =
+    termsOnly &&
+    termsTouched &&
+    ((
+      [
+        'start',
+        'days',
+        'package',
+        'custom',
+        'discount',
+        'limit',
+        'loyaltyReason',
+        'freeDays',
+      ] as const
+    ).some((field) => clean(values[field]) !== clean(initialValues[field])) ||
+      (!!clean(values.discount) && values.discountMode !== initialValues.discountMode));
+  useEffect(() => onTermsDirtyChange?.(termsDirty), [onTermsDirtyChange, termsDirty]);
+  const previewEnabled = !termsOnly || termsDirty;
   const watchedVehicle = options.data?.vehicles.find((v) => v.id === values.vehicleId);
   const watchedBrandId = watchedVehicle?.brandId;
   useEffect(() => {
@@ -164,7 +220,7 @@ export default function BookingForm({
     scheduleError,
     availabilityNotice,
     refreshAvailability,
-  } = useBookingPreview(draftKey, scheduleKey);
+  } = useBookingPreview(previewEnabled ? draftKey : '', previewEnabled ? scheduleKey : '');
   useEffect(() => {
     if (target?.type === 'vehicle') setWithoutVehicle(false);
   }, [target?.type]);
@@ -207,13 +263,18 @@ export default function BookingForm({
         (!values.modelId || v.modelId === values.modelId),
     )
     .map(compactVehicleOption);
-  const currentPreview =
-    preview?.draftKey === draftKey ? preview : schedule?.key === scheduleKey ? schedule : undefined;
+  const currentPreview = previewEnabled
+    ? preview?.draftKey === draftKey
+      ? preview
+      : schedule?.key === scheduleKey
+        ? schedule
+        : undefined
+    : undefined;
   const hasAvailabilityWarning =
     !!currentPreview?.availability && currentPreview.availability.status !== 'feasible';
-  const savesWithoutVehicle = !!target && target.type !== 'vehicle';
+  const savesWithoutVehicle = !termsOnly && !!target && target.type !== 'vehicle';
   const blocked =
-    target?.type === 'vehicle' &&
+    (target?.type === 'vehicle' || (termsOnly && !!initial?.vehicleId)) &&
     !!currentPreview &&
     (currentPreview.conflicts?.length > 0 ||
       (currentPreview.vehicle && !currentPreview.vehicle.isReady));
@@ -230,20 +291,41 @@ export default function BookingForm({
     form.setFieldsValue({ advancedTarget: 'model:' + model, vehicleId: undefined });
   };
   const currentCalculation = preview?.draftKey === draftKey ? preview!.calculation : undefined;
-  const saveAction = !blocked && (
+  const saveWithoutVehicle = withoutVehicle || (savesWithoutVehicle && hasAvailabilityWarning);
+  const saveLabel = initial?.bookingId
+    ? saveWithoutVehicle
+      ? 'Сохранить без автомобиля'
+      : 'Сохранить бронь'
+    : 'Создать бронь';
+  const canSave =
+    fieldsValid &&
+    !!preview &&
+    preview.draftKey === draftKey &&
+    !calculating &&
+    !selecting &&
+    !selected?.isBlocked &&
+    (!preview.calculation.overridesToConfirm.length || manual);
+  const termsReady = termsDirty && !blocked && canSave;
+  useEffect(() => onTermsReadyChange?.(termsReady), [onTermsReadyChange, termsReady]);
+  useImperativeHandle(termsRef, () => ({
+    buildBody: () => (termsReady && !disabled ? body() : undefined),
+    refreshAvailability,
+  }));
+  const saveAction = Action && !blocked && (
     <Action
       path={initial?.bookingId ? '/bookings/' + initial.bookingId + '/terms' : '/bookings'}
       command={initial?.bookingId ? 'bookings.terms' : 'bookings.create'}
-      label={
-        initial?.bookingId
-          ? withoutVehicle || (savesWithoutVehicle && hasAvailabilityWarning)
-            ? 'Сохранить без автомобиля'
-            : 'Сохранить бронь'
-          : 'Создать бронь'
-      }
+      label={saveLabel}
       body={body}
       onDone={onDone}
       onAvailabilityChanged={refreshAvailability}
+      invoicePrompt={
+        !initial?.bookingId && type === 'company'
+          ? target?.type === 'vehicle'
+            ? 'now'
+            : 'no-vehicle'
+          : undefined
+      }
       revision={JSON.stringify({
         values,
         selected: selected?.id,
@@ -251,15 +333,7 @@ export default function BookingForm({
         token: preview?.previewToken,
         availabilityToken: preview?.availability?.token,
       })}
-      disabled={
-        !fieldsValid ||
-        !preview ||
-        preview.draftKey !== draftKey ||
-        calculating ||
-        selecting ||
-        selected?.isBlocked ||
-        (preview.calculation.overridesToConfirm.length > 0 && !manual)
-      }
+      disabled={!canSave}
     />
   );
   const changeVehicleTarget = (value: string | undefined) => {
@@ -274,14 +348,26 @@ export default function BookingForm({
   };
 
   const handleValuesChange = (changed: Partial<BookingFormValues>) => {
+    if (termsOnly) setTermsTouched(true);
     setManual(false);
     cancelSelectionOnEdit(changed);
   };
+  const displayedCalculation = termsOnly && !termsDirty ? calculation : currentCalculation;
+  const mileageField = (
+    <Form.Item name="package" label="Пробег в сутки" rules={[{ required: true }]}>
+      <Segmented
+        aria-label="Пробег в сутки"
+        block
+        options={[100, 250, 400].map((value) => ({ value, label: value + ' км' }))}
+      />
+    </Form.Item>
+  );
   const footer = (
     <BookingFooter
-      calculation={currentCalculation}
-      calculating={calculating}
+      calculation={displayedCalculation}
+      calculating={previewEnabled && calculating}
       saveAction={saveAction}
+      showSave={!!Action}
     />
   );
   return (
@@ -293,243 +379,265 @@ export default function BookingForm({
       }}
     >
       <Form
-        className="booking-form"
+        className={termsOnly ? 'booking-form contract-terms-form' : 'booking-form'}
         form={form}
         layout="vertical"
         initialValues={initialValues}
+        disabled={disabled || undefined}
         onValuesChange={handleValuesChange}
       >
-        {searchError && <Alert type="error" message={searchError} />}
-        <section className="booking-form-section">
-          <div className="booking-form-section-heading">
-            <h3>Клиент</h3>
-            <Form.Item name="type" rules={[{ required: true }]}>
-              <Segmented
-                aria-label="Тип клиента"
-                disabled={!!selected}
-                options={[
-                  { value: 'individual', label: 'Физическое лицо' },
-                  { value: 'company', label: 'Организация' },
-                ]}
-                onChange={changeCustomerType}
-              />
-            </Form.Item>
-          </div>
-          <div className="form-grid">
-            {type === 'individual' ? (
-              <>
-                <Form.Item name={['details', 'lastName']} label="Фамилия" rules={required}>
-                  <AutoComplete {...autoProps('name')} aria-label="Фамилия">
-                    <Input maxLength={100} />
+        {!termsOnly && (
+          <>
+            {searchError && <Alert type="error" message={searchError} />}
+            <section className="booking-form-section">
+              <div className="booking-form-section-heading">
+                <h3>Клиент</h3>
+                <Form.Item name="type" rules={[{ required: true }]}>
+                  <Segmented
+                    aria-label="Тип клиента"
+                    disabled={!!selected}
+                    options={[
+                      { value: 'individual', label: 'Физическое лицо' },
+                      { value: 'company', label: 'Организация' },
+                    ]}
+                    onChange={changeCustomerType}
+                  />
+                </Form.Item>
+              </div>
+              <div className="form-grid">
+                {type === 'individual' ? (
+                  <>
+                    <Form.Item name={['details', 'lastName']} label="Фамилия" rules={required}>
+                      <AutoComplete {...autoProps('name')} aria-label="Фамилия">
+                        <Input maxLength={100} />
+                      </AutoComplete>
+                    </Form.Item>
+                    <Form.Item name={['details', 'firstName']} label="Имя" rules={required}>
+                      <Input aria-label="Имя" maxLength={100} />
+                    </Form.Item>
+                    <Form.Item name={['details', 'middleName']} label="Отчество">
+                      <Input aria-label="Отчество" maxLength={100} />
+                    </Form.Item>
+                  </>
+                ) : (
+                  <Form.Item name="displayName" label="Название организации" rules={required}>
+                    <AutoComplete {...autoProps('name')} aria-label="Название организации">
+                      <Input maxLength={250} />
+                    </AutoComplete>
+                  </Form.Item>
+                )}
+                <Form.Item
+                  name="phone"
+                  label="Телефон"
+                  rules={[{ required: true, message: 'Укажите телефон.' }, ...phoneRules]}
+                >
+                  <AutoComplete {...autoProps('phone')} aria-label="Телефон">
+                    <Input
+                      type="tel"
+                      maxLength={18}
+                      placeholder="+7 (999) 999-99-99"
+                      onBlur={() =>
+                        form.setFieldValue(
+                          'phone',
+                          normalizePhone(form.getFieldValue('phone') ?? ''),
+                        )
+                      }
+                    />
                   </AutoComplete>
                 </Form.Item>
-                <Form.Item name={['details', 'firstName']} label="Имя" rules={required}>
-                  <Input aria-label="Имя" maxLength={100} />
+                <Form.Item
+                  className="booking-form-full"
+                  name="email"
+                  label="Email"
+                  rules={[{ type: 'email' }]}
+                >
+                  <Input aria-label="Email" />
                 </Form.Item>
-                <Form.Item name={['details', 'middleName']} label="Отчество">
-                  <Input aria-label="Отчество" maxLength={100} />
-                </Form.Item>
-              </>
-            ) : (
-              <Form.Item name="displayName" label="Название организации" rules={required}>
-                <AutoComplete {...autoProps('name')} aria-label="Название организации">
-                  <Input maxLength={250} />
-                </AutoComplete>
-              </Form.Item>
-            )}
-            <Form.Item
-              name="phone"
-              label="Телефон"
-              rules={[{ required: true, message: 'Укажите телефон.' }, ...phoneRules]}
-            >
-              <AutoComplete {...autoProps('phone')} aria-label="Телефон">
-                <Input
-                  type="tel"
-                  maxLength={18}
-                  placeholder="+7 (999) 999-99-99"
-                  onBlur={() =>
-                    form.setFieldValue('phone', normalizePhone(form.getFieldValue('phone') ?? ''))
-                  }
+                {type === 'company' && (
+                  <Form.Item className="booking-form-full" name="inn" label="ИНН">
+                    <Input maxLength={12} />
+                  </Form.Item>
+                )}
+              </div>
+              {selecting && (
+                <Typography.Text type="secondary" role="status">
+                  Загрузка карточки…
+                </Typography.Text>
+              )}
+              {selected && !initial?.customerId && (
+                <Button className="booking-reset-client" type="link" onClick={resetClient}>
+                  Очистить клиента
+                </Button>
+              )}
+              {hasStoredDetails && (
+                <Collapse
+                  activeKey={extras}
+                  onChange={(keys) => setExtras(Array.isArray(keys) ? keys : [keys])}
+                  items={[
+                    {
+                      key: 'details',
+                      label: type === 'individual' ? 'Документы и адреса' : 'Реквизиты организации',
+                      forceRender: true,
+                      children: (
+                        <div className="form-grid">
+                          {Object.entries(
+                            type === 'individual' ? identityLabels : companyLabels,
+                          ).map(([key, label]) => (
+                            <Form.Item key={key} name={['details', key]} label={label}>
+                              {key === 'representativePhone' ? (
+                                <PhoneInput />
+                              ) : (
+                                <Input
+                                  type={key.endsWith('Date') ? 'date' : 'text'}
+                                  maxLength={500}
+                                />
+                              )}
+                            </Form.Item>
+                          ))}
+                        </div>
+                      ),
+                    },
+                  ]}
                 />
-              </AutoComplete>
-            </Form.Item>
-            <Form.Item
-              className="booking-form-full"
-              name="email"
-              label="Email"
-              rules={[{ type: 'email' }]}
-            >
-              <Input aria-label="Email" />
-            </Form.Item>
-            {type === 'company' && (
-              <Form.Item className="booking-form-full" name="inn" label="ИНН">
-                <Input maxLength={12} />
-              </Form.Item>
-            )}
-          </div>
-          {selecting && (
-            <Typography.Text type="secondary" role="status">
-              Загрузка карточки…
-            </Typography.Text>
-          )}
-          {selected && !initial?.customerId && (
-            <Button className="booking-reset-client" type="link" onClick={resetClient}>
-              Очистить клиента
-            </Button>
-          )}
-          {hasStoredDetails && (
-            <Collapse
-              activeKey={extras}
-              onChange={(keys) => setExtras(Array.isArray(keys) ? keys : [keys])}
-              items={[
-                {
-                  key: 'details',
-                  label: type === 'individual' ? 'Документы и адреса' : 'Реквизиты организации',
-                  forceRender: true,
-                  children: (
-                    <div className="form-grid">
-                      {Object.entries(type === 'individual' ? identityLabels : companyLabels).map(
-                        ([key, label]) => (
-                          <Form.Item key={key} name={['details', key]} label={label}>
-                            {key === 'representativePhone' ? (
-                              <PhoneInput />
-                            ) : (
-                              <Input
-                                type={key.endsWith('Date') ? 'date' : 'text'}
-                                maxLength={500}
-                              />
-                            )}
-                          </Form.Item>
-                        ),
-                      )}
-                    </div>
-                  ),
-                },
-              ]}
-            />
-          )}
-        </section>
-        <Divider />
+              )}
+            </section>
+            <Divider />
+          </>
+        )}
         <section className="booking-form-section">
-          <h3>Автомобиль и аренда</h3>
-          <Form.Item name="brandId" hidden>
-            <Input />
-          </Form.Item>
-          <Form.Item name="modelId" hidden>
-            <Input />
-          </Form.Item>
-          <div className="form-grid">
-            <Form.Item
-              label="Марка и модель"
-              required={!advanced}
-              extra={advanced ? 'Выбран вариант из дополнительных настроек.' : undefined}
-            >
-              <Select
-                aria-label="Марка и модель"
-                showSearch
-                allowClear
-                disabled={advanced}
-                optionFilterProp="label"
-                value={
-                  values.modelId
-                    ? 'model:' + values.modelId
-                    : values.brandId
-                      ? 'brand:' + values.brandId
+          {!termsOnly && (
+            <>
+              <h3>Автомобиль и аренда</h3>
+              <Form.Item name="brandId" hidden>
+                <Input />
+              </Form.Item>
+              <Form.Item name="modelId" hidden>
+                <Input />
+              </Form.Item>
+              <div className="form-grid">
+                <Form.Item
+                  label="Марка и модель"
+                  required={!advanced}
+                  extra={advanced ? 'Выбран вариант из дополнительных настроек.' : undefined}
+                >
+                  <Select
+                    aria-label="Марка и модель"
+                    showSearch
+                    allowClear
+                    disabled={advanced}
+                    optionFilterProp="label"
+                    value={
+                      values.modelId
+                        ? 'model:' + values.modelId
+                        : values.brandId
+                          ? 'brand:' + values.brandId
+                          : undefined
+                    }
+                    options={[
+                      {
+                        label: 'Марки',
+                        options: (options.data?.brands ?? []).map((b) => ({
+                          value: 'brand:' + b.id,
+                          label: b.label,
+                        })),
+                      },
+                      {
+                        label: 'Модели',
+                        options: (options.data?.models ?? []).map((m) => ({
+                          value: 'model:' + m.id,
+                          label: m.label,
+                        })),
+                      },
+                    ]}
+                    onChange={changeVehicleTarget}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="vehicleId"
+                  label="Автомобиль"
+                  rules={[{ required: requiresVehicle }]}
+                  extra={
+                    requiresVehicle
+                      ? 'У марки несколько тарифов: выберите автомобиль или модель.'
                       : undefined
-                }
-                options={[
-                  {
-                    label: 'Марки',
-                    options: (options.data?.brands ?? []).map((b) => ({
-                      value: 'brand:' + b.id,
-                      label: b.label,
-                    })),
-                  },
-                  {
-                    label: 'Модели',
-                    options: (options.data?.models ?? []).map((m) => ({
-                      value: 'model:' + m.id,
-                      label: m.label,
-                    })),
-                  },
-                ]}
-                onChange={changeVehicleTarget}
-              />
-            </Form.Item>
-            <Form.Item
-              name="vehicleId"
-              label="Автомобиль"
-              rules={[{ required: requiresVehicle }]}
-              extra={
-                requiresVehicle
-                  ? 'У марки несколько тарифов: выберите автомобиль или модель.'
-                  : undefined
-              }
-            >
-              <Select
-                aria-label="Автомобиль"
-                showSearch
-                allowClear
-                disabled={advanced}
-                optionFilterProp="searchLabel"
-                options={vehicleOptions}
-                placeholder="Без назначения автомобиля"
-              />
-            </Form.Item>
-          </div>
-          <div className="form-grid">
+                  }
+                >
+                  <Select
+                    aria-label="Автомобиль"
+                    showSearch
+                    allowClear
+                    disabled={advanced}
+                    optionFilterProp="searchLabel"
+                    options={vehicleOptions}
+                    placeholder="Без назначения автомобиля"
+                  />
+                </Form.Item>
+              </div>
+            </>
+          )}
+          <div className={termsOnly ? 'contract-terms-fields' : 'form-grid'}>
             <Form.Item name="start" label="Начало аренды" rules={required}>
               <RentalDateInput />
             </Form.Item>
-            <Form.Item name="days" label="Количество дней" rules={[{ required: true }]}>
-              <InputNumber aria-label="Количество дней" min={1} max={3660} precision={0} />
+            <Form.Item
+              name="days"
+              label={termsOnly ? 'Срок аренды' : 'Количество дней'}
+              rules={[{ required: true }]}
+            >
+              {termsOnly ? (
+                <Select
+                  aria-label="Срок аренды"
+                  showSearch
+                  options={contractDurationOptions}
+                  optionFilterProp="label"
+                />
+              ) : (
+                <InputNumber aria-label="Количество дней" min={1} max={3660} precision={0} />
+              )}
             </Form.Item>
+            {termsOnly && mileageField}
           </div>
-          <Form.Item name="package" label="Пробег в сутки" rules={[{ required: true }]}>
-            <Segmented
-              aria-label="Пробег в сутки"
-              block
-              options={[100, 250, 400].map((v) => ({ value: v, label: v + ' км' }))}
-            />
-          </Form.Item>
+          {!termsOnly && mileageField}
         </section>
-        <Collapse
-          className="booking-form-options"
-          activeKey={advanced ? ['other'] : []}
-          onChange={(keys) => {
-            setAdvanced(keys.length > 0);
-            form.setFieldValue('advancedTarget', undefined);
-          }}
-          items={[
-            {
-              key: 'other',
-              label: 'Другие варианты бронирования',
-              children: (
-                <Form.Item
-                  name="advancedTarget"
-                  label="Модель или группа аналогов"
-                  rules={[{ required: advanced }]}
-                >
-                  <Select
-                    aria-label="Модель или группа аналогов"
-                    showSearch
-                    optionFilterProp="label"
-                    options={[
-                      ...(options.data?.models ?? []).map((m) => ({
-                        value: 'model:' + m.id,
-                        label: m.label + ' · Модель',
-                      })),
-                      ...(options.data?.groups ?? []).map((g) => ({
-                        value: 'equivalence_group:' + g.id,
-                        label: g.label + ' · Аналоги',
-                      })),
-                    ]}
-                  />
-                </Form.Item>
-              ),
-            },
-          ]}
-        />
+        {!termsOnly && (
+          <Collapse
+            className="booking-form-options"
+            activeKey={advanced ? ['other'] : []}
+            onChange={(keys) => {
+              setAdvanced(keys.length > 0);
+              form.setFieldValue('advancedTarget', undefined);
+            }}
+            items={[
+              {
+                key: 'other',
+                label: 'Другие варианты бронирования',
+                children: (
+                  <Form.Item
+                    name="advancedTarget"
+                    label="Модель или группа аналогов"
+                    rules={[{ required: advanced }]}
+                  >
+                    <Select
+                      aria-label="Модель или группа аналогов"
+                      showSearch
+                      optionFilterProp="label"
+                      options={[
+                        ...(options.data?.models ?? []).map((m) => ({
+                          value: 'model:' + m.id,
+                          label: m.label + ' · Модель',
+                        })),
+                        ...(options.data?.groups ?? []).map((g) => ({
+                          value: 'equivalence_group:' + g.id,
+                          label: g.label + ' · Аналоги',
+                        })),
+                      ]}
+                    />
+                  </Form.Item>
+                ),
+              },
+            ]}
+          />
+        )}
         <Collapse
           className="booking-form-options"
           items={[
@@ -598,8 +706,8 @@ export default function BookingForm({
             },
           ]}
         />
-        {calcError && <Alert type="warning" message={calcError} />}
-        {scheduleError && (
+        {previewEnabled && calcError && <Alert type="warning" message={calcError} />}
+        {previewEnabled && scheduleError && (
           <Alert type="warning" message={'Не удалось проверить доступность: ' + scheduleError} />
         )}
         {currentPreview && (
@@ -612,11 +720,15 @@ export default function BookingForm({
                     ? 'Автомобиль занят на выбранный период'
                     : 'Автомобиль не готов к выдаче'
                 }
-                description="Выберите свободную замену, измените даты или сохраните бронь без назначения автомобиля."
+                description={
+                  termsOnly
+                    ? 'Измените даты или замените автомобиль в разделе «Акт».'
+                    : 'Выберите свободную замену, измените даты или сохраните бронь без назначения автомобиля.'
+                }
               />
             )}
             <ConflictList items={currentPreview.conflicts} />
-            {blocked && (
+            {blocked && !termsOnly && (
               <>
                 <p>Свободные автомобили на весь период:</p>
                 <Space wrap>
@@ -666,7 +778,25 @@ export default function BookingForm({
             {availabilityNotice}
           </Typography.Paragraph>
         )}
-        {footerContainer ? createPortal(footer, footerContainer) : footer}
+        {termsOnly && contractDeposit ? (
+          <div className="contract-edit-finance">
+            <Form.Item label="Стоимость аренды" required>
+              <div className="contract-edit-price">
+                <Input
+                  aria-label="Стоимость аренды"
+                  readOnly
+                  value={calculating ? 'Рассчитываем…' : rub(displayedCalculation?.finalTotalRub)}
+                />
+                {displayedCalculation && <RentalPriceInfo calculation={displayedCalculation} />}
+              </div>
+            </Form.Item>
+            {contractDeposit}
+          </div>
+        ) : footerContainer ? (
+          createPortal(footer, footerContainer)
+        ) : (
+          footer
+        )}
       </Form>
     </ConfigProvider>
   );

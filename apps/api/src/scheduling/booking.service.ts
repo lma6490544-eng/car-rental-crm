@@ -1,3 +1,4 @@
+import { bookingHasInvoiceReceipts, guardCheckoutChange } from '../documents/checkout-state';
 import type { PoolClient } from 'pg';
 import type { z } from 'zod';
 import type { Calculation } from '../pricing/calculate';
@@ -15,8 +16,14 @@ import type {
   CreateBookingInput,
   UpdateBookingInput,
 } from './booking.dto';
-import { lockBookingCustomer, prepareBookingTerms, recordBookingTerms } from './booking-write';
+import {
+  assignedVehicleModel,
+  lockBookingCustomer,
+  prepareBookingTerms,
+  recordBookingTerms,
+} from './booking-write';
 import type { BookingRow } from './booking-write';
+import { queueAccountingEmail } from './accounting-email';
 
 type MoveBookingRow = Omit<BookingRow, 'target_type'> & {
   target_type: Target['type'];
@@ -58,12 +65,18 @@ export class BookingService {
             )
           ).rows.map((x) => x.model_id)
         : await this.s.models(c, input.target);
+      const vehicleId = input.target.type === 'vehicle' ? input.target.id : input.vehicleId;
+      const assignedModel =
+        input.target.type !== 'vehicle' && vehicleId
+          ? await assignedVehicleModel(c, vehicleId, models)
+          : undefined;
       const preview = await previewBooking(
         c,
         input.target,
         input.pricing,
         models,
         request.auth!.user.id,
+        assignedModel,
       );
       const inspection = await this.s.inspect(c, {
         id: input.bookingId,
@@ -71,7 +84,7 @@ export class BookingService {
         models,
         startAt: preview.calculation.startAt,
         endAt: preview.calculation.agreedReturnAt,
-        vehicleId: input.target.type === 'vehicle' ? input.target.id : null,
+        vehicleId: vehicleId ?? null,
       });
       return { ...preview, ...inspection };
     });
@@ -83,6 +96,7 @@ export class BookingService {
       { bookingId, ...input },
       async (c) => {
         await scheduleLock(c);
+        await guardCheckoutChange(c, bookingId);
         const row = (
           await c.query<BookingRow>(
             "UPDATE bookings SET status='cancelled',version=version+1,updated_at=now() WHERE id=$1 AND version=$2 AND status='confirmed' RETURNING *",
@@ -132,7 +146,57 @@ export class BookingService {
           )
         ).rows[0];
         await recordBookingTerms(c, this.s, input, r, models, row, prepared, 'bookings.created');
+        if (
+          input.requestAccountingEmail &&
+          prepared.vehicleId &&
+          (await queueAccountingEmail(c, row.id))
+        )
+          return { ...row, accountingEmailRequested: true };
         return row;
+      },
+      false,
+    );
+  }
+  requestAccountingEmail(r: AuthRequest, bookingId: number, expectedVersion: number) {
+    return this.s.commands.run(
+      r,
+      'bookings.accounting-email',
+      { bookingId, expectedVersion },
+      async (client) => {
+        await scheduleLock(client);
+        const {
+          rows: [booking],
+        } = await client.query<{
+          version: number;
+          status: BookingRow['status'];
+          type: 'company' | 'individual';
+          assigned: boolean;
+        }>(
+          `SELECT b.version,b.status,c.type,EXISTS (
+            SELECT 1 FROM schedule_blocks s WHERE s.booking_id=b.id
+              AND s.kind='assignment' AND s.retired_at IS NULL
+          ) AS assigned FROM bookings b JOIN customers c ON c.id=b.customer_id WHERE b.id=$1`,
+          [bookingId],
+        );
+        if (!booking) fail(404, 'NOT_FOUND', 'Бронь не найдена.');
+        if (booking.status !== 'confirmed' || booking.version !== expectedVersion)
+          fail(409, 'BOOKING_VERSION_CONFLICT', 'Перечитайте актуальную бронь.');
+        if (booking.type !== 'company' || !booking.assigned)
+          fail(
+            422,
+            'ACCOUNTING_EMAIL_UNAVAILABLE',
+            'Для отправки нужна бронь на организацию с назначенным автомобилем.',
+          );
+        if (!(await queueAccountingEmail(client, bookingId))) return { id: bookingId };
+        await audit(
+          client,
+          r.auth!.user.id,
+          'booking',
+          'bookings.accounting-email.requested',
+          bookingId,
+          r.requestId,
+        );
+        return { id: bookingId, accountingEmailRequested: true };
       },
       false,
     );
@@ -144,6 +208,7 @@ export class BookingService {
       { bookingId, ...input },
       async (c) => {
         await scheduleLock(c);
+        const checkout = await guardCheckoutChange(c, bookingId, true);
         const old = bookingId
           ? (
               await c.query<BookingRow>('SELECT * FROM bookings WHERE id=$1 FOR UPDATE', [
@@ -195,6 +260,19 @@ export class BookingService {
           lockedCustomer,
           bookingId,
         );
+        if (checkout?.hasMoney ?? (await bookingHasInvoiceReceipts(c, bookingId))) {
+          const assignment = await c.query<{ vehicle_id: number }>(
+            'SELECT vehicle_id FROM schedule_blocks WHERE booking_id=$1 AND retired_at IS NULL',
+            [bookingId],
+          );
+          const assignedVehicleId = assignment.rows[0]?.vehicle_id;
+          if (assignedVehicleId !== undefined && prepared.vehicleId !== assignedVehicleId)
+            fail(
+              409,
+              'CHECKOUT_HAS_MONEY',
+              'Сначала оформите возврат или компенсацию, чтобы изменить назначенный автомобиль.',
+            );
+        }
         const { startAt, endAt } = prepared;
         const targets = ['vehicle', 'model', 'brand', 'equivalence_group'].map((t) =>
           input.target.type === t ? input.target.id : null,
@@ -218,6 +296,15 @@ export class BookingService {
       { bookingId, ...input },
       async (c) => {
         await scheduleLock(c);
+        const {
+          rows: [assignment],
+        } = await c.query<{ vehicle_id: number }>(
+          `SELECT vehicle_id FROM schedule_blocks
+           WHERE booking_id=$1 AND kind='assignment' AND retired_at IS NULL`,
+          [bookingId],
+        );
+        const firstAssignment = !assignment && input.vehicleId !== null;
+        await guardCheckoutChange(c, bookingId, firstAssignment);
         const booking = (
           await c.query<BookingRow>('SELECT * FROM bookings WHERE id=$1 FOR UPDATE', [bookingId])
         ).rows[0];
@@ -448,6 +535,7 @@ export class BookingService {
       { bookingId, ...input },
       async (c) => {
         await scheduleLock(c);
+        await guardCheckoutChange(c, bookingId);
         const p = await this.inspectMove(
           c,
           bookingId,

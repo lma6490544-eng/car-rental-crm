@@ -215,6 +215,7 @@ export const vehicles = pgTable(
     year: integer('year').notNull(),
     bodyType: text('body_type').notNull(),
     transmission: text('transmission'),
+    hasCasco: boolean('has_casco'),
     currentMileageKm: integer('current_mileage_km'),
     nextMaintenanceDueKm: integer('next_maintenance_due_km'),
     isReady: boolean('is_ready').notNull().default(true),

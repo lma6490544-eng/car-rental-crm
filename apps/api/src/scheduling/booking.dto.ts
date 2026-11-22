@@ -7,7 +7,7 @@ export const target = z
   .object({ type: z.enum(['vehicle', 'model', 'brand', 'equivalence_group']), id })
   .strict();
 export const bookingPreview = z
-  .object({ target, pricing: bookingPricing, bookingId: id.optional() })
+  .object({ target, pricing: bookingPricing, bookingId: id.optional(), vehicleId: id.optional() })
   .strict();
 export type PreviewBookingInput = z.infer<typeof bookingPreview>;
 export const acceptance = z
@@ -65,7 +65,10 @@ export const terms = z
     reason,
   })
   .strict();
-export const create = terms.extend({ customer: bookingCustomer });
+export const create = terms.extend({
+  customer: bookingCustomer,
+  requestAccountingEmail: z.boolean().optional(),
+});
 export const change = terms.extend({ expectedVersion: id });
 
 export type BookingTermsInput = z.infer<typeof terms>;

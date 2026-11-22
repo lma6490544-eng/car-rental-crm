@@ -10,7 +10,7 @@ export function useListScroll(key: string, ready: boolean) {
     return () => window.removeEventListener('scroll', save);
   }, [key, ready]);
 }
-export function usePolling<T>(path: string, keepPreviousData = false) {
+export function usePolling<T>(path: string | undefined, keepPreviousData = false) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState('');
   const [settledPath, setSettledPath] = useState<string>();
@@ -23,6 +23,11 @@ export function usePolling<T>(path: string, keepPreviousData = false) {
     if (!keepPreviousData) setData(undefined);
     setLoading(true);
     setError('');
+    if (path === undefined) {
+      trigger.current = async () => {};
+      setLoading(false);
+      return;
+    }
     const load = async () => {
       if (!alive) return;
       if (busy) {
@@ -73,7 +78,7 @@ export function usePolling<T>(path: string, keepPreviousData = false) {
   return {
     data,
     error,
-    loading: loading || settledPath !== path,
+    loading: path !== undefined && (loading || settledPath !== path),
     reload: useCallback(() => trigger.current(), []),
   };
 }

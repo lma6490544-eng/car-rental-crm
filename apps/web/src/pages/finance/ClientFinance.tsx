@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Alert, Button, Collapse, Table } from 'antd';
+import { Button, Collapse, Space, Table } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { PollNotice, usePolling } from '../../catalog';
 import type { CustomerFinance } from './types';
@@ -39,12 +39,14 @@ export function ClientFinance({
     <section aria-label="Финансы клиента" className={compact ? 'booking-finance' : undefined}>
       <PollNotice {...p} />
       {summary && <FinancialSummary value={summary} compact={compact} />}
-      <Alert
-        type="info"
-        showIcon
-        message="Бронь фиксирует плановую стоимость. Оплата и залог доступны при оформлении договора и фактической выдаче машины; оформление выдачи пока недоступно."
-        style={{ marginBlock: 12 }}
-      />
+      {!editor && bookingId && summary?.paymentsAllowed && (
+        <Space wrap style={{ marginBlock: 12 }}>
+          <Button type="primary" onClick={() => setEditor({ kind: 'rent_payment' })}>
+            Подтвердить оплату
+          </Button>
+          <Button onClick={() => setEditor({ kind: 'deposit_receipt' })}>Подтвердить залог</Button>
+        </Space>
+      )}
       {!bookingId && (
         <>
           <h3>Залоги и доступные средства</h3>

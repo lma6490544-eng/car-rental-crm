@@ -1,3 +1,4 @@
+import { guardCheckoutChange } from '../documents/checkout-state';
 import { Injectable } from '@nestjs/common';
 import { AuthRequest, fail } from '../platform/security';
 import { isDeepStrictEqual } from 'node:util';
@@ -106,6 +107,7 @@ export class TechnicalBlockService {
           ).rows[0];
           if (!b || b.version !== conflict.booking_version || b.status !== 'confirmed')
             fail(409, 'BOOKING_VERSION_CONFLICT', 'Затронутая бронь изменилась.');
+          await guardCheckoutChange(c, b.id);
           await c.query(
             'UPDATE schedule_blocks SET retired_at=now(),version=version+1 WHERE id=$1',
             [conflict.id],

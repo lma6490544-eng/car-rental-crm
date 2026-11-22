@@ -1,7 +1,8 @@
 import type { Availability, CommandResult } from '../../contracts';
 import { createContext, useContext, useEffect, useEffectEvent, useRef, useState } from 'react';
-import { Alert, Button, Input } from 'antd';
+import { Alert, Button, Input, Modal } from 'antd';
 import { api, ApiError, errorMessage } from '../../api';
+import type { ActionProps } from '../booking-form/types';
 export const CommandLock = createContext({ locked: false, setLocked: (_value: boolean) => {} });
 export default function Action({
   path,
@@ -13,17 +14,10 @@ export default function Action({
   revision,
   riskLabel = 'Сохранить с предупреждением',
   onAvailabilityChanged,
-}: {
-  path: string;
-  command: string;
-  body: () => unknown;
-  label: string;
-  onDone: (result: CommandResult) => void;
-  disabled?: boolean;
-  revision?: string;
-  riskLabel?: string;
-  onAvailabilityChanged?: () => void;
-}) {
+  invoicePrompt,
+  visible = true,
+}: ActionProps) {
+  const [askingForInvoice, setAskingForInvoice] = useState(false);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [pending, setPending] = useState<{
@@ -51,7 +45,7 @@ export default function Action({
       return () => setLocked(false);
     }
   }, [busy, pending, setLocked]);
-  async function send(check = false) {
+  async function send(check = false, requestAccountingEmail?: boolean) {
     if (active.current || !navigator.onLine) return;
     active.current = true;
     setBusy(true);
@@ -70,6 +64,7 @@ export default function Action({
         key: crypto.randomUUID(),
         body: {
           ...(body() as object),
+          ...(requestAccountingEmail === undefined ? {} : { requestAccountingEmail }),
           ...(risk ? { riskAcceptance: { token: risk.token, reason } } : {}),
         },
       };
@@ -109,6 +104,15 @@ export default function Action({
       setBusy(false);
     }
   }
+  function submit() {
+    if (invoicePrompt) setAskingForInvoice(true);
+    else void send();
+  }
+  function saveWithInvoiceChoice(request: boolean) {
+    setAskingForInvoice(false);
+    void send(false, request);
+  }
+  if (!visible && !busy && !pending) return null;
   return (
     <div className="calendar-action">
       {error && <Alert type="error" message={error} />}{' '}
@@ -157,10 +161,34 @@ export default function Action({
           type="primary"
           loading={busy}
           disabled={disabled || lock.locked || !navigator.onLine}
-          onClick={() => void send()}
+          onClick={submit}
         >
           {risk ? riskLabel : label}
         </Button>
+      )}
+      {invoicePrompt && (
+        <Modal
+          open={askingForInvoice}
+          title="Выставить счёт?"
+          onCancel={() => setAskingForInvoice(false)}
+          footer={[
+            <Button key="no" onClick={() => saveWithInvoiceChoice(false)} disabled={disabled}>
+              Нет, сохранить без счёта
+            </Button>,
+            <Button
+              key="yes"
+              type="primary"
+              onClick={() => saveWithInvoiceChoice(true)}
+              disabled={disabled || invoicePrompt === 'no-vehicle'}
+            >
+              Да, передать в бухгалтерию
+            </Button>,
+          ]}
+        >
+          {invoicePrompt === 'no-vehicle'
+            ? 'Сохраните бронь, затем назначьте автомобиль и нажмите «Выставить счёт» в карточке брони.'
+            : 'CRM отправит данные по брони бухгалтерии после сохранения.'}
+        </Modal>
       )}
     </div>
   );

@@ -15,6 +15,7 @@ import { allowedOrigins } from '../env';
 import { AuthRequest, fail, hash, safeEqual, sessionToken } from './security';
 
 export const Public = () => SetMetadata('public', true);
+export const BinaryUpload = () => SetMetadata('binaryUpload', true);
 @Injectable()
 export class SessionGuard implements CanActivate {
   private readonly origins = allowedOrigins();
@@ -32,7 +33,13 @@ export class SessionGuard implements CanActivate {
         request.headers['sec-fetch-site'] === 'cross-site'
       )
         fail(403, 'ORIGIN_REJECTED', 'Запрос отправлен с недопустимого адреса.');
-      if (!request.is('application/json')) fail(415, 'JSON_REQUIRED', 'Ожидается JSON.');
+      if (this.reflector.get<boolean>('binaryUpload', context.getHandler())) {
+        const mime = request.headers['content-type'];
+        if (!mime || !['image/jpeg', 'image/png', 'application/pdf'].includes(mime))
+          fail(415, 'FILE_TYPE_UNSUPPORTED', 'Допустимы JPEG, PNG или PDF для документов клиента.');
+      } else if (!request.is('application/json')) {
+        fail(415, 'JSON_REQUIRED', 'Ожидается JSON.');
+      }
     }
     if (this.reflector.getAllAndOverride('public', [context.getHandler(), context.getClass()]))
       return true;

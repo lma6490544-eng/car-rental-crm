@@ -9,6 +9,22 @@ export function bounded(n: bigint) {
   return n;
 }
 
+export function rentPaymentProgress(summary: { priceRub: string; coverageRub: string }) {
+  const price = BigInt(summary.priceRub);
+  const received = BigInt(summary.coverageRub);
+  const remaining = positive(price - received);
+  let status: 'not_required' | 'paid' | 'partial' | 'unpaid';
+  if (price === 0n) status = 'not_required';
+  else if (remaining === 0n) status = 'paid';
+  else status = received > 0n ? 'partial' : 'unpaid';
+  return {
+    status,
+    priceRub: summary.priceRub,
+    receivedRub: summary.coverageRub,
+    remainingRub: remaining.toString(),
+  };
+}
+
 export async function recordEvent(
   c: PoolClient,
   r: AuthRequest,

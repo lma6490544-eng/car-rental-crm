@@ -1,5 +1,5 @@
 import BookingForm from '../booking-form/BookingForm';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Badge,
@@ -13,6 +13,7 @@ import {
   Segmented,
   Select,
   Spin,
+  Space,
   Tag,
 } from 'antd';
 import {
@@ -30,19 +31,25 @@ import { moscowDate } from '../../shared/moscowTime';
 import CalendarGrid from './CalendarGrid';
 import { ProblemCard } from '../../features/booking/Conflicts';
 import './Calendar.css';
+import { ContractCheckout } from './ContractCheckout';
+import type { CheckoutExitGuard } from './ContractCheckout';
 import Action, { CommandLock } from './CalendarAction';
 import Booking, { type BookingHeading } from './BookingPanel';
 import VehiclePanel from './VehiclePanel';
 import { DAY } from './dates';
 import { useCalendarState } from './useCalendarState';
 import { useCalendarMove } from './useCalendarMove';
+import { AccountingEmailNotice } from './AccountingEmailNotice';
+import type { CommandResult } from '../../contracts';
 export default function Calendar() {
   const [bookingRevision, setBookingRevision] = useState(0);
+  const [accountingEmailBookings, setAccountingEmailBookings] = useState<number[]>([]);
   const { moveRequest, movePreview, moveError, moveLoading, loadMove, closeMove } =
     useCalendarMove();
   const [createFooter, setCreateFooter] = useState<HTMLDivElement | null>(null);
   const [bookingHeading, setBookingHeading] = useState<BookingHeading>();
   const [locked, setLocked] = useState(false);
+  const checkoutExit = useRef<CheckoutExitGuard>(null);
   const {
     p,
     calendarLoading,
@@ -92,21 +99,45 @@ export default function Calendar() {
   const completeMove = () => {
     closeMove();
     done();
+    if (panel?.kind === 'contract') checkoutExit.current?.refreshVehicle();
     setPanel((current) =>
       current?.kind === 'booking' ? { kind: 'booking', id: current.id } : current,
     );
     setBookingRevision((value) => value + 1);
   };
-  const bookingCreated = (booking: { id: number }) => {
+  const watchAccountingEmail = (booking: CommandResult) => {
+    if (booking.accountingEmailRequested)
+      setAccountingEmailBookings((ids) => (ids.includes(booking.id) ? ids : [...ids, booking.id]));
+  };
+  const bookingCreated = (booking: CommandResult) => {
+    watchAccountingEmail(booking);
     done();
     select({ kind: 'booking', id: booking.id });
   };
+  const reloadCalendar = p.reload;
+  const finishAccountingEmail = useCallback(
+    (bookingId: number) => {
+      setAccountingEmailBookings((ids) => ids.filter((id) => id !== bookingId));
+      void reloadCalendar();
+    },
+    [reloadCalendar],
+  );
   const closePanel = () => {
-    if (!locked) select(null);
+    if (locked) return;
+    if (panel?.kind === 'contract' && checkoutExit.current) {
+      checkoutExit.current.requestClose();
+      return;
+    }
+    select(null);
   };
   const cancelMove = () => {
     if (!locked) closeMove();
   };
+  const contractPhase =
+    panel?.kind === 'contract' || panel?.kind === 'booking'
+      ? (p.data?.events.find((event) => event.booking_id === panel.id)?.checkoutPhase ??
+        p.data?.unassignedBookings.find((booking) => booking.id === panel.id)?.checkoutPhase)
+      : undefined;
   const activeFilters =
     Number(!!filter.trim()) + Number(statuses.length > 0) + Number(groupBy !== 'brand');
   const filters = (
@@ -172,6 +203,13 @@ export default function Calendar() {
   );
   return (
     <div className="calendar-page">
+      {accountingEmailBookings.map((bookingId) => (
+        <AccountingEmailNotice
+          key={bookingId}
+          bookingId={bookingId}
+          onFinished={finishAccountingEmail}
+        />
+      ))}
       <header className="calendar-page-header">
         <h1>График</h1>
         <div className="calendar-navigation">
@@ -344,7 +382,9 @@ export default function Calendar() {
                 ? 'min(560px, 100vw)'
                 : panel?.kind === 'create'
                   ? 'min(720px, 100vw)'
-                  : 'min(640px, 100vw)'
+                  : panel?.kind === 'contract'
+                    ? 'min(920px, 100vw)'
+                    : 'min(640px, 100vw)'
             }
             footer={panel?.kind === 'create' ? <div ref={setCreateFooter} /> : undefined}
             styles={
@@ -367,9 +407,21 @@ export default function Calendar() {
                 <div className="booking-drawer-heading">
                   <div>
                     <span>Бронь №{panel.id}</span>
-                    {bookingHeading?.id === panel.id && (
-                      <Tag color={bookingHeading.status === 'cancelled' ? 'default' : 'gold'}>
-                        {bookingHeading.status === 'cancelled' ? 'Отменена' : 'До выдачи'}
+                    {bookingHeading?.id === panel.id && bookingHeading.status !== 'confirmed' && (
+                      <Tag
+                        color={
+                          bookingHeading.status === 'active'
+                            ? 'green'
+                            : bookingHeading.status === 'cancelled'
+                              ? 'default'
+                              : 'gold'
+                        }
+                      >
+                        {bookingHeading.status === 'active'
+                          ? 'Выдана'
+                          : bookingHeading.status === 'cancelled'
+                            ? 'Отменена'
+                            : null}
                       </Tag>
                     )}
                   </div>
@@ -382,6 +434,12 @@ export default function Calendar() {
                     </small>
                   )}
                 </div>
+              ) : panel?.kind === 'contract' ? (
+                <Space>
+                  Договор №{panel.id}
+                  {contractPhase === 'started' && <Badge status="processing" text="Оформление" />}
+                  {contractPhase === 'issued' && <Tag color="green">Автомобиль выдан</Tag>}
+                </Space>
               ) : panel?.kind === 'vehicle' ? (
                 'Автомобиль'
               ) : (
@@ -404,9 +462,31 @@ export default function Calendar() {
                 key={panel.id + ':' + (panel.action ?? '') + ':' + bookingRevision}
                 id={panel.id}
                 action={panel.action}
+                checkoutPhase={contractPhase}
                 onDone={done}
+                onAccountingEmailRequested={watchAccountingEmail}
                 onMove={(request) => void loadMove(request)}
                 onHeading={setBookingHeading}
+                onCheckout={() =>
+                  select({
+                    kind: 'contract',
+                    id: panel.id,
+                    action: contractPhase ? undefined : 'start',
+                  })
+                }
+              />
+            )}
+            {panel?.kind === 'contract' && (
+              <ContractCheckout
+                key={panel.id + ':' + (panel.action ?? '')}
+                id={panel.id}
+                autoStart={panel.action === 'start'}
+                startAtReturn={panel.action === 'complete'}
+                ref={checkoutExit}
+                onMove={(request) => void loadMove(request)}
+                onClose={() => select(null)}
+                onLock={setLocked}
+                onChanged={done}
               />
             )}
             {panel?.kind === 'vehicle' && (

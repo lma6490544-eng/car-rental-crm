@@ -1,0 +1,543 @@
+.document-stack {
+  width: 100%;
+}
+
+.document-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.document-version {
+  display: grid;
+  gap: 6px;
+  border-bottom: 1px solid var(--ant-color-border-secondary, currentColor);
+  padding-bottom: 8px;
+}
+
+.document-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.checkout-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 12px 16px;
+}
+
+.inspection-camera-button.ant-btn {
+  display: none;
+}
+
+.inspection-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inspection-editor {
+  container-type: inline-size;
+}
+
+.inspection-toolbar h3,
+.inspection-photo-section h3 {
+  margin: 0;
+  font-size: 1.0625em;
+  font-weight: 600;
+}
+
+.inspection-toolbar h3 {
+  margin-block-end: 4px;
+}
+
+.inspection-toolbar > .ant-btn {
+  margin-inline-start: auto;
+}
+
+.inspection-header-actions {
+  justify-content: flex-end;
+}
+
+.inspection-toolbar a {
+  color: var(--link);
+}
+
+.inspection-notes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 16px 24px;
+  margin: 0;
+}
+
+.inspection-notes dt {
+  color: var(--muted);
+  font-size: 0.875em;
+  margin-block-end: 2px;
+}
+
+.inspection-notes dd {
+  margin: 0;
+}
+
+.inspection-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.inspection-metrics > div,
+.inspection-notes > div {
+  position: relative;
+  padding-inline-start: 28px;
+}
+
+.inspection-metrics > div {
+  padding: 12px 12px 12px 42px;
+  border-radius: 8px;
+  background: var(--overview-bg);
+}
+
+.inspection-metrics dt {
+  color: var(--muted);
+  font-size: 0.875em;
+}
+
+.inspection-metrics dt .anticon,
+.inspection-notes dt .anticon {
+  position: absolute;
+  inset-inline-start: 0;
+  color: var(--text-soft);
+  font-size: 18px;
+}
+
+.inspection-metrics dt .anticon {
+  inset-inline-start: 12px;
+  inset-block-start: 14px;
+}
+
+.inspection-metrics dd {
+  margin: 4px 0 0;
+  font-size: 1.25em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.inspection-maintenance {
+  color: var(--muted);
+  font-size: 0.875em;
+}
+
+.inspection-photo-section {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+}
+
+.inspection-photo-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inspection-photo-count {
+  border-radius: 12px;
+  padding-inline: 8px;
+  background: var(--badge-bg);
+  color: var(--text-soft);
+  font-size: 0.875em;
+}
+
+.inspection-editor .inspection-photos.ant-upload-wrapper {
+  width: 100%;
+}
+
+.inspection-editor
+  .inspection-photos.ant-upload-wrapper
+  .ant-upload-list-picture-card
+  > :is(.ant-upload-list-item-container, .ant-upload-select) {
+  width: min(100%, 178px);
+  height: 120px;
+  border-radius: 8px;
+}
+
+.inspection-editor .inspection-photos.ant-upload-wrapper .ant-upload-list-item-done {
+  padding: 0;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.inspection-editor .inspection-photos.ant-upload-wrapper .ant-upload-list-item-done::before {
+  display: none;
+}
+
+.inspection-editor .inspection-photos a.ant-upload-list-item-thumbnail:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.inspection-editor
+  .inspection-photos.ant-upload-wrapper
+  .ant-upload-list-picture-card
+  .ant-upload-list-item-done
+  .ant-upload-list-item-thumbnail
+  img {
+  object-fit: cover;
+}
+
+.inspection-editor
+  .inspection-photos-edit.ant-upload-wrapper
+  .ant-upload-list-item
+  .ant-upload-list-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  inset: 6px 6px auto auto;
+  width: auto;
+  border-radius: 6px;
+  padding-inline: 2px;
+  background: var(--drawer-bg);
+  opacity: 0;
+  pointer-events: none;
+  transform: none;
+}
+
+.inspection-editor
+  .inspection-photos-edit.ant-upload-wrapper
+  .ant-upload-list-item
+  .ant-upload-list-item-actions
+  .ant-upload-list-item-action {
+  opacity: 1;
+}
+
+.inspection-editor
+  .inspection-photos-edit.ant-upload-wrapper
+  .ant-upload-list-item:is(:hover, :focus-within)
+  .ant-upload-list-item-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .inspection-editor
+    .inspection-photos-edit.ant-upload-wrapper
+    .ant-upload-list-item
+    .ant-upload-list-item-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.inspection-edit-metrics,
+.inspection-edit-notes {
+  display: grid;
+  gap: 12px 20px;
+}
+
+.inspection-edit-metrics .ant-input-number {
+  width: 100%;
+}
+
+.inspection-edit-metrics .document-field,
+.inspection-edit-notes .document-field {
+  gap: 8px;
+  align-content: start;
+}
+
+.inspection-edit-metrics .document-field > span:first-child,
+.inspection-edit-notes label > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inspection-fuel .inspection-fuel-slider.ant-slider {
+  margin: 6px 8px 18px;
+}
+
+.inspection-fuel > .ant-btn {
+  justify-self: start;
+}
+
+@container (min-width: 460px) {
+  .inspection-edit-notes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .inspection-edit-metrics {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.65fr);
+  }
+}
+
+.contract-edit-form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  container: contract-edit / inline-size;
+}
+
+.checkout-terms-heading h3 {
+  margin: 0;
+  font-size: 1.125em;
+  font-weight: 600;
+}
+
+.checkout-contract-edit-indicator .ant-badge-status-dot {
+  background: var(--accent);
+}
+
+.contract-terms-fields,
+.contract-edit-finance {
+  display: grid;
+  align-items: start;
+  gap: 16px;
+}
+
+.contract-terms-fields {
+  margin-block-end: 16px;
+}
+
+.booking-form .contract-terms-fields .ant-form-item,
+.booking-form .contract-edit-finance .ant-form-item,
+.contract-edit-form > .contract-edit-deposit.ant-form-item {
+  min-width: 0;
+  margin: 0;
+}
+
+.contract-terms-form .contract-terms-fields .ant-form-item-label > label,
+.contract-terms-form .contract-edit-finance .ant-form-item-label > label {
+  color: var(--text);
+  font-size: 1em;
+}
+
+.contract-terms-form .contract-terms-fields .ant-picker,
+.contract-terms-form .contract-terms-fields .ant-select-single,
+.contract-edit-finance .ant-input,
+.contract-edit-deposit .ant-input-number {
+  min-height: 42px;
+}
+
+.contract-edit-deposit .ant-input-number-input {
+  height: 40px;
+}
+
+.contract-edit-deposit .ant-input-number-handler-wrap {
+  opacity: 1;
+}
+
+.contract-terms-form .contract-terms-fields .ant-segmented {
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.contract-terms-form .contract-terms-fields .ant-segmented-item-label {
+  min-height: 34px;
+  line-height: 34px;
+}
+
+.contract-terms-form .contract-terms-fields .ant-segmented-item-selected {
+  font-weight: 600;
+}
+
+.contract-edit-finance,
+.contract-edit-actions {
+  margin-block-start: 4px;
+  padding-block-start: 16px;
+  border-block-start: 1px solid var(--line);
+}
+
+.contract-edit-price {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.contract-edit-price .ant-input,
+.contract-edit-deposit .ant-input-number {
+  width: 100%;
+  max-width: 260px;
+}
+
+.contract-edit-price .ant-btn {
+  flex: none;
+}
+
+.contract-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 12px;
+}
+
+.contract-edit-actions .ant-btn {
+  min-height: 42px;
+  padding-inline: 20px;
+}
+
+@container contract-edit (max-width: 280px) {
+  .contract-terms-form .contract-terms-fields .ant-segmented-item-label {
+    padding-inline: 4px;
+    font-size: 0.875em;
+  }
+}
+
+@container contract-edit (min-width: 460px) {
+  .contract-edit-finance {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .contract-edit-finance > .contract-edit-deposit {
+    padding-inline-start: 20px;
+    border-inline-start: 1px solid var(--line);
+  }
+}
+
+@container contract-edit (min-width: 560px) {
+  .contract-terms-fields {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1.3fr);
+  }
+
+  .contract-terms-fields > .ant-form-item + .ant-form-item {
+    padding-inline-start: 16px;
+    border-inline-start: 1px solid var(--line);
+  }
+}
+
+.contract-summary {
+  display: grid;
+  gap: 16px;
+  container-type: inline-size;
+}
+
+.contract-summary h3 {
+  margin: 0;
+  font-size: 1.125em;
+  font-weight: 600;
+}
+
+.contract-summary-terms,
+.contract-summary-finance {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 16px;
+  margin: 0;
+}
+
+.contract-summary-value {
+  position: relative;
+  min-width: 0;
+  padding-inline-start: 28px;
+}
+
+.contract-summary-value dt,
+.contract-summary-loyalty-data dt {
+  color: var(--muted);
+}
+
+.contract-summary-value dt .anticon {
+  position: absolute;
+  inset-inline-start: 0;
+  top: 2px;
+  color: var(--text-soft);
+  font-size: 18px;
+}
+
+.contract-summary-value dd {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 1.125em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.contract-summary-mileage {
+  display: flex;
+  margin: 0;
+  padding: 2px;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.contract-summary-mileage li {
+  flex: 1 1 0;
+  padding: 3px 4px;
+  border-radius: 4px;
+  color: var(--text-soft);
+  text-align: center;
+  font-size: 0.875rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.contract-summary-mileage li[aria-current='true'] {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.contract-summary-loyalty-data {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.contract-summary-loyalty-data dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.contract-summary-footer {
+  display: grid;
+  gap: 12px;
+  padding-block-start: 16px;
+  border-block-start: 1px solid var(--line);
+}
+
+.contract-summary-footer > .ant-btn {
+  justify-self: end;
+}
+
+.contract-summary-finance dd {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 1.375em;
+}
+
+.contract-summary-finance strong {
+  font-weight: 600;
+}
+
+.contract-summary-driver {
+  color: var(--text-soft);
+}
+
+@container (min-width: 660px) {
+  .contract-summary-terms,
+  .contract-summary-finance {
+    grid-template-columns: 1.1fr minmax(190px, 0.8fr) 1.4fr;
+  }
+
+  .contract-summary-terms > div + div,
+  .contract-summary-finance > div + div {
+    border-inline-start: 1px solid var(--line);
+    padding-inline-start: 40px;
+  }
+
+  .contract-summary-terms > div + div dt .anticon,
+  .contract-summary-finance > div + div dt .anticon {
+    inset-inline-start: 12px;
+  }
+}
+
+@media (pointer: coarse) {
+  .inspection-camera-button.ant-btn {
+    display: inline-flex;
+  }
+}

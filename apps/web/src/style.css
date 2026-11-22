@@ -32,9 +32,20 @@ body .ant-tooltip .ant-tooltip-arrow::before {
   gap: 8px;
   padding: 2px 4px;
 }
-.booking-tooltip > strong {
+.booking-tooltip-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.booking-tooltip-heading > strong {
+  min-width: 0;
   font-size: 16px;
   font-weight: 600;
+}
+.booking-tooltip-heading > .ant-tag {
+  flex: none;
+  margin-inline-end: 0;
 }
 .booking-tooltip-row {
   display: flex;
@@ -313,6 +324,53 @@ input {
 }
 .form-grid .ant-input-number {
   width: 100%;
+}
+.customer-form-groups,
+.client-data-groups {
+  display: grid;
+  gap: 12px;
+}
+.customer-form-groups {
+  container-type: inline-size;
+}
+.customer-form-group + .customer-form-group {
+  border-block-start: 1px solid var(--line);
+  padding-block-start: 12px;
+}
+.customer-form-group h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 1em;
+  font-weight: 600;
+}
+.customer-form-group h3 .anticon {
+  padding: 4px;
+  border-radius: 4px;
+  background: var(--badge-bg);
+  color: var(--text-soft);
+}
+.customer-form-group .form-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px 16px;
+}
+.customer-form-group .ant-form-item {
+  min-width: 0;
+  margin-block-end: 0;
+}
+@container (min-width: 440px) {
+  .customer-form-group .form-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .customer-form-group .form-grid > .ant-form-item {
+    grid-column: span 3;
+  }
+}
+@container (min-width: 600px) {
+  .customer-form-group-three .form-grid > .ant-form-item:nth-child(-n + 3) {
+    grid-column: span 2;
+  }
 }
 .preserve-lines {
   white-space: pre-wrap;

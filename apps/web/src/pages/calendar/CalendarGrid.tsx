@@ -4,11 +4,20 @@ import type {
   CalendarResponse,
   ScheduleEvent,
   CalendarPanel,
+  RentPaymentProgress,
 } from '../../contracts';
 import { useEffect, useRef, useState } from 'react';
 import { Badge, Dropdown, Tag, Tooltip } from 'antd';
-import { CalendarOutlined, PhoneOutlined, ClearOutlined, WarningOutlined } from '@ant-design/icons';
+import {
+  CalendarOutlined,
+  PhoneOutlined,
+  ClearOutlined,
+  WarningOutlined,
+  MailOutlined,
+} from '@ant-design/icons';
 import { layoutCalendarEvents } from './calendar-layout';
+import { rub } from '../../shared/formatters';
+import { rentPaymentLabels } from './RentPaymentStatus';
 import CurrentTimeIndicator from './CurrentTimeIndicator';
 import {
   DAY_MS as DAY,
@@ -29,9 +38,38 @@ const bookingStartLabel = (value: string | number) => {
   );
   return `${p.day}.${p.month} ${p.hour}:${p.minute}`;
 };
-function BookingBlock({ name, start }: { name: string; start: string }) {
+function BookingBlock({
+  name,
+  start,
+  phase,
+  accountingEmailUnsent,
+  invoicePayment,
+}: {
+  name: string;
+  start: string;
+  phase?: ScheduleEvent['checkoutPhase'];
+  accountingEmailUnsent?: true;
+  invoicePayment?: RentPaymentProgress;
+}) {
   return (
     <span className="calendar-booking-content">
+      {invoicePayment && (
+        <span
+          className="calendar-rent-payment-icon"
+          data-status={invoicePayment.status}
+          role="img"
+          aria-label={rentPaymentLabels[invoicePayment.status]}
+        >
+          ₽
+        </span>
+      )}
+      {accountingEmailUnsent && (
+        <MailOutlined
+          className="calendar-accounting-email-icon"
+          aria-label="Данные для счёта не отправлены"
+        />
+      )}
+      {phase === 'started' && <Badge status="processing" role="img" aria-label="Оформление" />}
       <Tag className="calendar-booking-start">{bookingStartLabel(start)}</Tag>
       <span className="calendar-booking-name">{name}</span>
     </span>
@@ -64,16 +102,22 @@ function BookingTooltip({
     id: number | string;
     customer_name?: string;
     customer_phone?: string;
+    checkoutPhase?: ScheduleEvent['checkoutPhase'];
     start_at: string;
     end_at: string;
     booking_id?: number | null;
     kind?: string;
     reason?: string;
+    accountingEmailUnsent?: true;
+    invoicePayment?: RentPaymentProgress;
   };
 }) {
   return (
     <div className="booking-tooltip">
-      <strong>{b.customer_name ?? 'Бронь №' + (b.booking_id ?? b.id)}</strong>
+      <div className="booking-tooltip-heading">
+        <strong>{b.customer_name ?? 'Бронь №' + (b.booking_id ?? b.id)}</strong>
+        {b.checkoutPhase === 'started' && <Tag color="processing">Оформление</Tag>}
+      </div>
       <div className="booking-tooltip-row">
         <CalendarOutlined />
         <span>
@@ -84,6 +128,21 @@ function BookingTooltip({
         <div className="booking-tooltip-row">
           <PhoneOutlined />
           <span>{tooltipPhone(b.customer_phone)}</span>
+        </div>
+      )}
+      {b.accountingEmailUnsent && (
+        <div className="booking-tooltip-row">
+          <MailOutlined aria-hidden />
+          <span>Данные для счёта не отправлены</span>
+        </div>
+      )}
+      {b.invoicePayment && (
+        <div className="booking-tooltip-row">
+          <span aria-hidden>₽</span>
+          <span>
+            {rentPaymentLabels[b.invoicePayment.status]} · Осталось{' '}
+            {rub(b.invoicePayment.remainingRub)}
+          </span>
         </div>
       )}
       {b.kind === 'displaced' && (
@@ -196,17 +255,17 @@ function VehicleRow({
           </span>
         </span>
       </button>
-      <Dropdown
-        trigger={['contextMenu', 'click']}
-        menu={{
-          items: [
-            { key: 'create', label: 'Забронировать' },
-            { key: 'vehicle', label: 'Автомобиль / блокировка' },
-          ],
-          onClick: ({ key }) => (key === 'create' ? create() : openVehicle()),
-        }}
-      >
-        <div className="calendar-track" style={{ width: days * dayWidth }}>
+      <div className="calendar-track" style={{ width: days * dayWidth }}>
+        <Dropdown
+          trigger={['contextMenu', 'click']}
+          menu={{
+            items: [
+              { key: 'create', label: 'Забронировать' },
+              { key: 'vehicle', label: 'Автомобиль / блокировка' },
+            ],
+            onClick: ({ key }) => (key === 'create' ? create() : openVehicle()),
+          }}
+        >
           <div className="calendar-cells">
             {Array.from({ length: days }, (_, i) => (
               <button
@@ -233,94 +292,130 @@ function VehicleRow({
               />
             ))}
           </div>
-          {layout.events.map((s) => {
-            const left = Math.max(0, ((Date.parse(s.start_at) - from) / DAY) * dayWidth),
-              right = Math.min(days * dayWidth, ((Date.parse(s.end_at) - from) / DAY) * dayWidth);
-            const open = () =>
-              onSelect(
-                s.booking_id
-                  ? { kind: 'booking', id: s.booking_id }
-                  : { kind: 'vehicle', id: v.id },
-              );
-            return (
-              <Dropdown
-                key={s.id}
-                trigger={['contextMenu']}
-                menu={{
-                  items: [
-                    { key: 'open', label: s.booking_id ? 'Открыть бронь' : 'Открыть блокировку' },
-                    { key: 'vehicle', label: 'Автомобиль' },
-                  ],
-                  onClick: ({ key }) => (key === 'open' ? open() : openVehicle()),
+        </Dropdown>
+        {layout.events.map((s) => {
+          const left = Math.max(0, ((Date.parse(s.start_at) - from) / DAY) * dayWidth),
+            right = Math.min(days * dayWidth, ((Date.parse(s.end_at) - from) / DAY) * dayWidth);
+          const activeRental = s.checkoutPhase === 'issued';
+          const open = () => {
+            if (!s.booking_id) openVehicle();
+            else onSelect({ kind: s.checkoutPhase ? 'contract' : 'booking', id: s.booking_id });
+          };
+          return (
+            <Dropdown
+              key={s.id}
+              trigger={['contextMenu']}
+              menu={{
+                items: [
+                  ...(activeRental ? [{ key: 'complete', label: 'Завершить аренду' }] : []),
+                  ...(!s.checkoutPhase
+                    ? [
+                        {
+                          key: 'open',
+                          label: s.booking_id ? 'Открыть бронь' : 'Открыть блокировку',
+                        },
+                      ]
+                    : []),
+                  ...(s.booking_id && (s.checkoutPhase || s.kind === 'assignment')
+                    ? [
+                        {
+                          key: 'checkout',
+                          label: s.checkoutPhase ? 'Открыть договор' : 'Создать договор',
+                        },
+                      ]
+                    : []),
+                  { key: 'vehicle', label: 'Автомобиль' },
+                ],
+                onClick: ({ key }) => {
+                  if (key === 'complete' && s.booking_id)
+                    onSelect({ kind: 'contract', id: s.booking_id, action: 'complete' });
+                  else if (key === 'checkout' && s.booking_id)
+                    onSelect({
+                      kind: 'contract',
+                      id: s.booking_id,
+                      action: s.checkoutPhase ? undefined : 'start',
+                    });
+                  else if (key === 'open') open();
+                  else openVehicle();
+                },
+              }}
+            >
+              <button
+                className={
+                  'calendar-event ' +
+                  (s.kind === 'technical' ? 'technical' : 'booking') +
+                  (activeRental
+                    ? Number(s.financialSummary?.paidPercent) === 100
+                      ? ' booking-paid'
+                      : ' booking-unpaid'
+                    : '') +
+                  (s.booking_id && (s.kind === 'assignment' || s.kind === 'displaced')
+                    ? ' calendar-draggable'
+                    : '')
+                }
+                style={{ left, width: Math.max(4, right - left), top: 5 + s.lane * 38 }}
+                onPointerDown={(e) => {
+                  if (
+                    e.button === 0 &&
+                    s.booking_id &&
+                    (s.kind === 'assignment' || s.kind === 'displaced')
+                  )
+                    onDragStart(s.booking_id, e.clientX, e.pointerId, e.currentTarget);
                 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (e.currentTarget.dataset.suppressClick === 'true') {
+                    e.currentTarget.dataset.suppressClick = '';
+                    return;
+                  }
+                  open();
+                }}
+                onContextMenu={(event) => event.stopPropagation()}
               >
                 <Tooltip title={s.booking_id ? <BookingTooltip booking={s} /> : s.reason}>
-                  <button
-                    className={
-                      'calendar-event ' +
-                      (s.kind === 'technical' ? 'technical' : 'booking') +
-                      (s.booking_id && (s.kind === 'assignment' || s.kind === 'displaced')
-                        ? ' calendar-draggable'
-                        : '')
-                    }
-                    style={{ left, width: Math.max(4, right - left), top: 5 + s.lane * 38 }}
-                    onPointerDown={(e) => {
-                      if (
-                        e.button === 0 &&
-                        s.booking_id &&
-                        (s.kind === 'assignment' || s.kind === 'displaced')
-                      )
-                        onDragStart(s.booking_id, e.clientX, e.pointerId, e.currentTarget);
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (e.currentTarget.dataset.suppressClick === 'true') {
-                        e.currentTarget.dataset.suppressClick = '';
-                        return;
-                      }
-                      open();
-                    }}
-                    onContextMenu={(e) => e.stopPropagation()}
-                  >
+                  <span className="calendar-event-tooltip">
                     {s.booking_id ? (
                       <BookingBlock
                         name={s.customer_name ?? 'Бронь №' + s.booking_id}
+                        phase={s.checkoutPhase}
+                        accountingEmailUnsent={s.accountingEmailUnsent}
+                        invoicePayment={s.invoicePayment}
                         start={s.start_at}
                       />
                     ) : (
                       s.reason
                     )}
-                  </button>
+                  </span>
                 </Tooltip>
-              </Dropdown>
-            );
-          })}
-          {layout.conflicts.flatMap((c) => {
-            const left = Math.max(0, ((c.start - from) / DAY) * dayWidth),
-              right = Math.min(days * dayWidth, ((c.end - from) / DAY) * dayWidth);
-            return layout.events
-              .filter((event) => c.eventIds.includes(event.id))
-              .map((event) => (
-                <button
-                  key={c.id + ':' + event.id}
-                  className="calendar-conflict-border"
-                  data-event-id={event.id}
-                  aria-label="Разобрать конфликт"
-                  title="Пересечение событий — открыть разбор"
-                  style={{ left, width: Math.max(4, right - left), top: 5 + event.lane * 38 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSelect(
-                      c.bookingId
-                        ? { kind: 'booking', id: c.bookingId }
-                        : { kind: 'vehicle', id: v.id },
-                    );
-                  }}
-                />
-              ));
-          })}
-        </div>
-      </Dropdown>
+              </button>
+            </Dropdown>
+          );
+        })}
+        {layout.conflicts.flatMap((c) => {
+          const left = Math.max(0, ((c.start - from) / DAY) * dayWidth),
+            right = Math.min(days * dayWidth, ((c.end - from) / DAY) * dayWidth);
+          return layout.events
+            .filter((event) => c.eventIds.includes(event.id))
+            .map((event) => (
+              <button
+                key={c.id + ':' + event.id}
+                className="calendar-conflict-border"
+                data-event-id={event.id}
+                aria-label="Разобрать конфликт"
+                title="Пересечение событий — открыть разбор"
+                style={{ left, width: Math.max(4, right - left), top: 5 + event.lane * 38 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelect(
+                    c.bookingId
+                      ? { kind: 'booking', id: c.bookingId }
+                      : { kind: 'vehicle', id: v.id },
+                  );
+                }}
+              />
+            ));
+        })}
+      </div>
     </div>
   );
 }
@@ -565,6 +660,8 @@ export default function CalendarGrid(props: Props) {
           <VehicleRow key={v.id} {...props} vehicle={v} onDragStart={begin} />
         ))}
         {unassigned.map((b) => {
+          const open = () =>
+            props.onSelect({ kind: b.checkoutPhase ? 'contract' : 'booking', id: b.id });
           const left = Math.max(0, ((Date.parse(b.start_at) - props.from) / DAY) * props.dayWidth),
             right = Math.min(
               days * props.dayWidth,
@@ -576,10 +673,7 @@ export default function CalendarGrid(props: Props) {
               key={'unassigned-' + b.id}
               data-unassigned-booking={b.id}
             >
-              <button
-                className="calendar-label"
-                onClick={() => props.onSelect({ kind: 'booking', id: b.id })}
-              >
+              <button className="calendar-label" onClick={open}>
                 Без автомобиля · №{b.id}
                 {!!b.problemReasons?.length && (
                   <Tooltip
@@ -606,10 +700,16 @@ export default function CalendarGrid(props: Props) {
                         e.currentTarget.dataset.suppressClick = '';
                         return;
                       }
-                      props.onSelect({ kind: 'booking', id: b.id });
+                      open();
                     }}
                   >
-                    <BookingBlock name={b.customer_name + ' · Не назначен'} start={b.start_at} />
+                    <BookingBlock
+                      name={b.customer_name + ' · Не назначен'}
+                      start={b.start_at}
+                      phase={b.checkoutPhase}
+                      accountingEmailUnsent={b.accountingEmailUnsent}
+                      invoicePayment={b.invoicePayment}
+                    />
                   </button>
                 </Tooltip>
                 {b.problemReasons?.length > 0 &&

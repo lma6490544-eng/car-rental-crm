@@ -1,4 +1,5 @@
 import { BookingService } from './booking.service';
+import { getAccountingEmailStatus } from './accounting-email';
 import { BookingQueryService } from './booking-query.service';
 import { CalendarService } from './calendar.service';
 import {
@@ -179,6 +180,15 @@ export class SchedulingController {
       )
     ).rows;
     return { items, total: items.length, terms };
+  }
+  @Get('bookings/:id/accounting-email')
+  accountingEmail(@Param('id') raw: string) {
+    return getAccountingEmailStatus(this.s.db.pool, parse(idSchema, raw));
+  }
+  @Post('bookings/:id/accounting-email')
+  requestAccountingEmail(@Param('id') raw: string, @Body() body: unknown, @Req() r: AuthRequest) {
+    const input = parse(z.object({ expectedVersion: id }).strict(), body);
+    return this.bookings.requestAccountingEmail(r, parse(idSchema, raw), input.expectedVersion);
   }
   @Post('bookings')
   create(

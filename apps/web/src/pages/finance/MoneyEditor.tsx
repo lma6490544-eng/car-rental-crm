@@ -63,7 +63,10 @@ export function MoneyEditor(props: MoneyEditorProps) {
               aria-label="Денежная операция"
               value={kind}
               onChange={changeKind}
-              options={['to_credit', 'refund'].map((value) => ({ value, label: names[value] }))}
+              options={(summary?.paymentsAllowed
+                ? ['rent_payment', 'deposit_receipt', 'to_credit', 'refund']
+                : ['to_credit', 'refund']
+              ).map((value) => ({ value, label: names[value] }))}
             />
           </Form.Item>
         )}

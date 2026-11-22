@@ -144,13 +144,16 @@ test(
         "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename",
       )
     ).rows.map((x) => x.tablename);
-    const fingerprints = {};
-    for (const table of oldTables)
-      fingerprints[table] = (
+    async function fingerprint(table) {
+      const rowData = table === 'vehicles' ? "(to_jsonb(t) - 'has_casco')::text" : 't::text';
+      return (
         await db.pool.query(
-          `SELECT md5(coalesce(string_agg(t::text,E'\n' ORDER BY t::text),'')) AS hash FROM "${table}" t`,
+          `SELECT md5(coalesce(string_agg(${rowData},E'\n' ORDER BY ${rowData}),'')) AS hash FROM "${table}" t`,
         )
       ).rows[0].hash;
+    }
+    const fingerprints = {};
+    for (const table of oldTables) fingerprints[table] = await fingerprint(table);
     await migrate(drizzle(db.pool), { migrationsFolder: migrations });
     const summary = (id) => db.transaction((c) => bookingSummary(c, id)),
       src = () => db.transaction((c) => sources(c, customer)),
@@ -170,15 +173,7 @@ test(
       async () => {
         for (const table of oldTables) {
           if (['audit_logs', 'outbox_jobs'].includes(table)) continue;
-          assert.equal(
-            (
-              await db.pool.query(
-                `SELECT md5(coalesce(string_agg(t::text,E'\n' ORDER BY t::text),'')) AS hash FROM "${table}" t`,
-              )
-            ).rows[0].hash,
-            fingerprints[table],
-            table,
-          );
+          assert.equal(await fingerprint(table), fingerprints[table], table);
         }
         const s = await summary(existing);
         assert.equal(s.priceRub, '10000');
@@ -190,39 +185,34 @@ test(
         assert.deepEqual((await controller.get({})).journal.items, []);
       },
     );
-    await t.test(
-      'receipts, deposits and credit use denied in preview and post, without writes',
-      async () => {
-        const before = (await db.pool.query('SELECT count(*)::int n FROM financial_operations'))
-          .rows[0].n;
-        for (const input of [
-          { kind: 'rent_payment', amountRub: '500', method: 'cash' },
-          { kind: 'rent_payment', amountRub: '500', method: 'bank' },
-          { kind: 'deposit_receipt', amountRub: '10000', method: 'cash' },
-          {
-            kind: 'credit_use',
-            sources: [
-              { lotId: 1, bucket: 'credit', fund: null, bookingId: null, amountRub: '500' },
-            ],
-          },
-        ]) {
-          const body = { ...target(existing), reason: 'До выдачи', ...input };
-          await assert.rejects(controller.preview(body), code('RENTAL_NOT_ISSUED'));
-          await assert.rejects(post(body), code('RENTAL_NOT_ISSUED'));
-        }
-        assert.equal(
-          (await db.pool.query('SELECT count(*)::int n FROM financial_operations')).rows[0].n,
-          before,
-        );
-        for (const table of [
-          'finance_external',
-          'finance_lots',
-          'finance_allocations',
-          'finance_fund_entries',
-        ])
-          assert.equal((await db.pool.query('SELECT count(*)::int n FROM ' + table)).rows[0].n, 0);
-      },
-    );
+    await t.test('receipts and deposits denied before checkout; credit use denied', async () => {
+      const before = (await db.pool.query('SELECT count(*)::int n FROM financial_operations'))
+        .rows[0].n;
+      for (const input of [
+        { kind: 'rent_payment', amountRub: '500', method: 'cash' },
+        { kind: 'rent_payment', amountRub: '500', method: 'bank' },
+        { kind: 'deposit_receipt', amountRub: '10000', method: 'cash' },
+        {
+          kind: 'credit_use',
+          sources: [{ lotId: 1, bucket: 'credit', fund: null, bookingId: null, amountRub: '500' }],
+        },
+      ]) {
+        const body = { ...target(existing), reason: 'До начала оформления', ...input };
+        await assert.rejects(controller.preview(body), code('RENTAL_NOT_ISSUED'));
+        await assert.rejects(post(body), code('RENTAL_NOT_ISSUED'));
+      }
+      assert.equal(
+        (await db.pool.query('SELECT count(*)::int n FROM financial_operations')).rows[0].n,
+        before,
+      );
+      for (const table of [
+        'finance_external',
+        'finance_lots',
+        'finance_allocations',
+        'finance_fund_entries',
+      ])
+        assert.equal((await db.pool.query('SELECT count(*)::int n FROM ' + table)).rows[0].n, 0);
+    });
     await t.test('initial balance remains separate from payment journal', async () => {
       await post({
         kind: 'initial',
@@ -556,7 +546,9 @@ test(
             fullPage: true,
           });
           await page.goto(origin + '/calendar?date=2026-12-01&booking=' + existing);
-          await page.getByText('До выдачи', { exact: true }).waitFor();
+          await page.getByText('Бронь №' + existing, { exact: true }).waitFor();
+          assert.equal(await page.getByText('До выдачи', { exact: true }).count(), 0);
+          await page.getByText('Денежные операции', { exact: true }).click();
           await page.getByText('Плановая стоимость брони', { exact: true }).waitFor();
           assert.equal(await page.getByText('К оплате', { exact: true }).count(), 0);
           await page

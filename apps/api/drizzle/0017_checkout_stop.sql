@@ -1,0 +1,2 @@
+ALTER TABLE "booking_checkouts" ADD COLUMN "stopped_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "booking_checkouts" ADD CONSTRAINT "checkout_stop_before_issue" CHECK (stopped_at IS NULL OR issued_at IS NULL);

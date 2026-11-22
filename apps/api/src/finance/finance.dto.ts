@@ -83,3 +83,44 @@ export const financeInput = z.discriminatedUnion('kind', [
   z.object({ ...base, kind: z.literal('reversal'), operationId: id }).strict(),
 ]);
 export type FinanceInput = z.infer<typeof financeInput>;
+
+export const checkoutReceiptInput = z
+  .object({
+    ...booking,
+    kind: z.enum(['rent_payment', 'deposit_receipt']),
+    cashRub: money,
+    bankRub: money,
+    reason: base.reason,
+  })
+  .strict()
+  .refine(({ kind, bankRub }) => kind !== 'deposit_receipt' || bankRub === '0', {
+    path: ['bankRub'],
+    message: 'Залог принимается наличными.',
+  })
+  .refine(
+    ({ cashRub, bankRub }) => {
+      if (!rubPattern.test(cashRub) || !rubPattern.test(bankRub)) return true;
+      const total = BigInt(cashRub) + BigInt(bankRub);
+      return total > 0n && total <= MAX_RUB;
+    },
+    { message: 'Укажите допустимую сумму поступления.' },
+  );
+
+export type CheckoutReceiptInput = z.infer<typeof checkoutReceiptInput>;
+
+export const invoiceReceiptInput = z
+  .object({
+    ...booking,
+    amountRub: amount,
+    expectedCoverageRub: money,
+    paidOn: z.iso
+      .date()
+      .refine(
+        (value) => value <= new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Moscow' }),
+        'Дата поступления не может быть в будущем.',
+      ),
+    reference: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict();
+
+export type InvoiceReceiptInput = z.infer<typeof invoiceReceiptInput>;

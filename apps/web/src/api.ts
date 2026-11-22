@@ -24,7 +24,7 @@ export const setCsrfToken = (value: string | null) => {
 };
 export async function api<T>(
   path: string,
-  options: { method?: string; body?: unknown; key?: string; anonymous?: boolean } = {},
+  options: { method?: string; body?: unknown; key?: string; anonymous?: boolean; file?: File } = {},
 ): Promise<T> {
   const method = options.method ?? 'GET';
   let response: Response;
@@ -35,11 +35,11 @@ export async function api<T>(
       cache: 'no-store',
       signal: AbortSignal.timeout(15000),
       headers: {
-        ...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
+        ...(method !== 'GET' ? { 'Content-Type': options.file?.type || 'application/json' } : {}),
         ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
         ...(options.key ? { 'Idempotency-Key': options.key } : {}),
       },
-      ...(method !== 'GET' ? { body: JSON.stringify(options.body ?? {}) } : {}),
+      ...(method !== 'GET' ? { body: options.file ?? JSON.stringify(options.body ?? {}) } : {}),
     });
   } catch {
     throw new ApiError(0, 'NETWORK_ERROR', 'Нет ответа от сервера. Проверьте соединение.');

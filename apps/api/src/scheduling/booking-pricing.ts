@@ -22,6 +22,7 @@ export async function previewBooking(
   pricing: z.infer<typeof bookingPricing>,
   models: number[],
   actor: number,
+  assignedModel?: number,
 ) {
   const groups = (
     await c.query(
@@ -29,13 +30,20 @@ export async function previewBooking(
       [models],
     )
   ).rows;
-  if (groups.length !== 1)
+  let group = groups.length === 1 ? groups[0] : undefined;
+  if (groups.length > 1 && assignedModel !== undefined) {
+    const { rows } = await c.query<{ pricing_group_id: number }>(
+      'SELECT pricing_group_id FROM vehicle_models WHERE id=$1',
+      [assignedModel],
+    );
+    group = groups.find((candidate) => candidate.id === rows[0]?.pricing_group_id);
+  }
+  if (!group)
     fail(
       422,
       'TARIFF_AMBIGUOUS',
       'У выбранной марки или группы несколько тарифов. Уточните модель или автомобиль.',
     );
-  const group = groups[0];
   if (!group.code)
     fail(422, 'TARIFF_NOT_CONFIGURED', 'Для выбранного автомобиля тариф ещё не настроен.');
   const input = parse(quoteInput, {

@@ -11,13 +11,14 @@ import {
   useState,
 } from 'react';
 import { flushSync } from 'react-dom';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { usePolling } from '../../catalog';
 import type { UIEvent, WheelEvent } from 'react';
 import { DAY, PAST_DAYS, scaleWidth } from './dates';
 type Panel = CalendarPanel;
 let savedPanel: Panel = null,
   savedScroll: number | null = null;
+let savedPanelLocationKey: string | undefined;
 let savedCollapsed = new Set<string>();
 export function useCalendarState() {
   const [rangePending, setRangePending] = useState(false);
@@ -26,6 +27,7 @@ export function useCalendarState() {
     savedCollapsed = collapsed;
   }, [collapsed]);
   const [params, setParams] = useSearchParams();
+  const { key: locationKey } = useLocation();
   const date = params.get('date') ?? moscowDate(Date.now()),
     scale = [2, 3].includes(Number(params.get('scale'))) ? Number(params.get('scale')) : 1,
     filter = params.get('q') ?? '';
@@ -50,6 +52,7 @@ export function useCalendarState() {
     setRangePending(false);
   }, [from]);
   const [panel, setPanel] = useState<Panel>(() => {
+    if (savedPanel?.kind === 'contract' && savedPanelLocationKey === locationKey) return savedPanel;
     const booking = Number(params.get('booking')),
       vehicle = Number(params.get('vehicle'));
     return Number.isInteger(booking) && booking > 0
@@ -74,8 +77,12 @@ export function useCalendarState() {
     if (!p.loading) shifting.current = false;
   }, [p.loading]);
   useEffect(() => {
-    savedPanel = panel;
-  }, [panel]);
+    savedPanel =
+      panel?.kind === 'contract' && panel.action === 'start'
+        ? { kind: 'contract', id: panel.id }
+        : panel;
+    savedPanelLocationKey = locationKey;
+  }, [locationKey, panel]);
   useLayoutEffect(() => {
     if (!scroll.current) return;
     restoring.current = true;

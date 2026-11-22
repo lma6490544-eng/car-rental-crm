@@ -1,3 +1,4 @@
+import { checkoutAvailable } from '../documents/checkout-state';
 import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { AuthRequest, parse, idSchema, fail } from '../platform/security';
@@ -12,7 +13,7 @@ import {
   vehicleUpdate,
 } from './catalog.dto';
 const fields =
-  'v.id,v.model_id AS "modelId",v.plate,v.vin,v.year,v.transmission,v.body_type AS "bodyType",v.current_mileage_km AS "currentMileageKm",v.next_maintenance_due_km AS "nextMaintenanceDueKm",v.is_ready AS "isReady",v.readiness_reason AS "readinessReason",v.needs_wash AS "needsWash",v.issue_notes AS "issueNotes",v.archived_at AS "archivedAt",v.version';
+  'v.id,v.model_id AS "modelId",v.plate,v.vin,v.year,v.transmission,v.has_casco AS "hasCasco",v.body_type AS "bodyType",v.current_mileage_km AS "currentMileageKm",v.next_maintenance_due_km AS "nextMaintenanceDueKm",v.is_ready AS "isReady",v.readiness_reason AS "readinessReason",v.needs_wash AS "needsWash",v.issue_notes AS "issueNotes",v.archived_at AS "archivedAt",v.version';
 const join =
   ' FROM vehicles v JOIN vehicle_models m ON m.id=v.model_id JOIN vehicle_brands b ON b.id=m.brand_id JOIN pricing_groups p ON p.id=m.pricing_group_id';
 const named =
@@ -28,6 +29,13 @@ const activeBookingIds = `ARRAY(
 export class VehiclesController {
   constructor(private readonly service: CatalogService) {}
   private async assertNoActiveBookings(client: PoolClient, vehicleId: number) {
+    if (await checkoutAvailable(client)) {
+      const issued = await client.query(
+        'SELECT booking_id FROM booking_checkouts WHERE issued_vehicle_id=$1',
+        [vehicleId],
+      );
+      if (issued.rowCount) fail(409, 'VEHICLE_ALREADY_ISSUED', 'Автомобиль выдан клиенту.');
+    }
     const { rows } = await client.query<{ bookingIds: number[] }>(
       'SELECT ' + activeBookingIds + ' AS "bookingIds" FROM vehicles v WHERE v.id=$1',
       [vehicleId],
@@ -93,7 +101,7 @@ export class VehiclesController {
       async (client) => {
         const modelId = await this.service.resolveVehicleModel(client, d);
         const { rows } = await client.query(
-          'INSERT INTO vehicles(model_id,plate,vin,year,body_type,current_mileage_km,next_maintenance_due_km,is_ready,readiness_reason,needs_wash,issue_notes,transmission) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING RETURNING id,version',
+          'INSERT INTO vehicles(model_id,plate,vin,year,body_type,current_mileage_km,next_maintenance_due_km,is_ready,readiness_reason,needs_wash,issue_notes,transmission,has_casco) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING RETURNING id,version',
           [
             modelId,
             d.plate,
@@ -107,6 +115,7 @@ export class VehiclesController {
             d.needsWash,
             d.isReady ? d.note || d.issueNotes : '',
             d.transmission,
+            d.hasCasco ?? null,
           ],
         );
         if (!rows[0])
@@ -149,7 +158,7 @@ export class VehiclesController {
         let rows;
         try {
           ({ rows } = await client.query(
-            'UPDATE vehicles SET model_id=$2,plate=$3,vin=$4,year=$5,body_type=$6,current_mileage_km=$7,next_maintenance_due_km=$8,is_ready=$9,readiness_reason=$10,needs_wash=$11,issue_notes=$12,transmission=$13,version=version+1,updated_at=now() WHERE id=$1 RETURNING id,version',
+            'UPDATE vehicles SET model_id=$2,plate=$3,vin=$4,year=$5,body_type=$6,current_mileage_km=$7,next_maintenance_due_km=$8,is_ready=$9,readiness_reason=$10,needs_wash=$11,issue_notes=$12,transmission=$13,has_casco=$14,version=version+1,updated_at=now() WHERE id=$1 RETURNING id,version',
             [
               id,
               modelId,
@@ -164,6 +173,7 @@ export class VehiclesController {
               d.needsWash,
               d.isReady ? d.note || d.issueNotes : '',
               d.transmission ?? old.transmission,
+              d.hasCasco === undefined ? old.has_casco : d.hasCasco,
             ],
           ));
         } catch (e) {

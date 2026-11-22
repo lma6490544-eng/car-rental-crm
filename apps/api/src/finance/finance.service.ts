@@ -1,17 +1,27 @@
 import { Injectable } from '@nestjs/common';
+import { checkoutStates } from '../documents/checkout-state';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../database.service';
 import { CommandsService } from '../platform/commands.service';
 import { AuthRequest, fail, hash } from '../platform/security';
 import { scheduleLock } from '../scheduling/scheduling.service';
-import type { FinanceInput } from './finance.dto';
-import { bookingSummary, bounded, funds, recordEvent, sources } from './ledger';
+import type { CheckoutReceiptInput, FinanceInput, InvoiceReceiptInput } from './finance.dto';
+import {
+  bookingSummaries,
+  bounded,
+  funds,
+  recordEvent,
+  rentPaymentProgress,
+  sources,
+} from './ledger';
+import type { bookingSummary } from './ledger';
 
 export { financeInput } from './finance.dto';
 export type { FinanceInput } from './finance.dto';
 type AllocationBucket = 'rent' | 'deposit' | 'credit';
 type FundId = 'operating_cash' | 'deposit_pool';
 type PaymentMethod = 'cash' | 'bank';
+type RentPayment = Extract<FinanceInput, { kind: 'rent_payment' }>;
 
 type Allocation = {
   lotId: number;
@@ -114,10 +124,117 @@ export class FinanceService {
         [id],
       )
     ).rows;
-    const summaries = [];
-    for (const b of bookings) summaries.push(await bookingSummary(c, b.id));
+    const summaries = await this.checkoutSummaries(
+      c,
+      bookings.map(({ id }) => id),
+    );
     return { sources: await sources(c, id), bookings: summaries, ...(await this.journal(c, id)) };
   }
+  async checkoutSummary(c: PoolClient, id: number) {
+    const [summary] = await this.checkoutSummaries(c, [id]);
+    return summary;
+  }
+
+  private async checkoutSummaries(c: PoolClient, ids: readonly number[]) {
+    const summaries = await bookingSummaries(c, ids);
+    const states = await checkoutStates(c, ids);
+    const missingDeposits = ids.filter((id) => {
+      const state = states.get(id);
+      const summary = summaries.get(id)!;
+      return (
+        state &&
+        (state.hasMoney || summary.status === 'confirmed') &&
+        state.requiredDepositRub === null &&
+        summary.suggestedDepositRub === null
+      );
+    });
+    const vehicleDeposits = await this.assignedVehicleDeposits(c, missingDeposits);
+    return ids.map((id) => {
+      const summary = summaries.get(id)!;
+      const state = states.get(id);
+      const paymentsAllowed = summary.status === 'confirmed' && state !== undefined;
+      if (!state?.hasMoney && !paymentsAllowed) return { ...summary, paymentsAllowed };
+      const balance = BigInt(summary.priceRub) - BigInt(summary.coverageRub);
+      return {
+        ...summary,
+        paymentsAllowed,
+        suggestedDepositRub:
+          state?.requiredDepositRub ??
+          summary.suggestedDepositRub ??
+          vehicleDeposits.get(id) ??
+          null,
+        debtRub: (balance > 0n ? balance : 0n).toString(),
+        overpaymentRub: (balance < 0n ? -balance : 0n).toString(),
+      };
+    });
+  }
+
+  async invoicePaymentProgress(c: PoolClient, summary: Awaited<ReturnType<typeof bookingSummary>>) {
+    const {
+      rows: [customer],
+    } = await c.query<{ type: 'company' | 'individual' }>(
+      'SELECT type FROM customers WHERE id=$1',
+      [summary.customerId],
+    );
+    return customer?.type === 'company' ? rentPaymentProgress(summary) : undefined;
+  }
+
+  private async validateInvoiceReceipt(
+    c: PoolClient,
+    input: InvoiceReceiptInput,
+    summary: Awaited<ReturnType<typeof bookingSummary>>,
+  ) {
+    const progress = await this.invoicePaymentProgress(c, summary);
+    if (!progress || summary.status !== 'confirmed')
+      fail(
+        422,
+        'INVOICE_RECEIPT_UNAVAILABLE',
+        'Подтвердить поступление по счёту можно по действующей брони организации.',
+      );
+    if (input.expectedCoverageRub !== progress.receivedRub)
+      fail(
+        409,
+        'INVOICE_BALANCE_CHANGED',
+        'Сумма поступлений изменилась. Проверьте остаток и повторите подтверждение.',
+      );
+    if (BigInt(input.amountRub) > BigInt(progress.remainingRub))
+      fail(422, 'INVOICE_RECEIPT_EXCEEDS_BALANCE', 'Сумма поступления превышает остаток к оплате.');
+    if (
+      input.reference &&
+      (
+        await c.query(
+          `SELECT 1 FROM financial_operations o
+          JOIN audit_logs a ON a.entity_type='financial_operation' AND a.entity_id=o.id AND a.action='finance.rent_payment'
+          WHERE o.booking_id=$1 AND a.details->'invoiceReceipt'->>'paidOn'=$2
+            AND a.details->'invoiceReceipt'->>'reference'=$3
+            AND NOT EXISTS (SELECT 1 FROM financial_operations r WHERE r.reversal_of=o.id)
+          LIMIT 1`,
+          [input.bookingId, input.paidOn, input.reference],
+        )
+      ).rowCount
+    )
+      fail(
+        409,
+        'INVOICE_RECEIPT_ALREADY_POSTED',
+        'Поступление с этим номером и датой уже проведено по брони.',
+      );
+  }
+
+  private async assignedVehicleDeposits(c: PoolClient, bookingIds: number[]) {
+    if (!bookingIds.length) return new Map<number, string>();
+    const { rows } = await c.query<{ booking_id: number; body_type: string }>(
+      `SELECT s.booking_id,v.body_type FROM schedule_blocks s JOIN vehicles v ON v.id=s.vehicle_id
+       WHERE s.booking_id=ANY($1::int[]) AND s.kind='assignment' AND s.retired_at IS NULL`,
+      [bookingIds],
+    );
+    return new Map(
+      rows.map(({ booking_id, body_type }) => [
+        booking_id,
+        body_type === 'cargo_minibus' ? '15000' : '10000',
+      ]),
+    );
+  }
+
   async lock(c: PoolClient, input: FinanceInput) {
     // Shared schedule lock also serializes price changes, cancellation and displacement.
     // Domain order matches Scheduling: schedule, booking, customer, lots, funds.
@@ -143,7 +260,11 @@ export class FinanceService {
     }
     await c.query('SELECT id FROM finance_funds ORDER BY id FOR UPDATE');
   }
-  async plan(c: PoolClient, input: FinanceInput): Promise<Plan> {
+  async plan(
+    c: PoolClient,
+    input: FinanceInput,
+    invoiceReceipt?: InvoiceReceiptInput,
+  ): Promise<Plan> {
     const p: Plan = {
       allocations: [],
       funds: {},
@@ -156,7 +277,7 @@ export class FinanceService {
     };
     let summary;
     if (p.bookingId) {
-      summary = await bookingSummary(c, p.bookingId);
+      summary = await this.checkoutSummary(c, p.bookingId);
       if (summary.customerId !== p.customerId)
         fail(422, 'CUSTOMER_MISMATCH', 'Бронь принадлежит другому клиенту.');
       if (!('expectedVersion' in input) || input.expectedVersion !== summary.bookingVersion)
@@ -166,14 +287,15 @@ export class FinanceService {
           'Условия брони изменились. Обновите данные перед подтверждением.',
         );
     }
-    // Booking confirmation is not a signed contract or actual vehicle handover.
-    // No issuance workflow exists yet; never infer eligibility from booking status/date.
-    if (['rent_payment', 'deposit_receipt', 'credit_use'].includes(input.kind))
-      fail(
-        422,
-        'RENTAL_NOT_ISSUED',
-        'Оплата, залог и зачёт в оплату доступны только при оформлении договора и фактической выдаче автомобиля. Оформление выдачи пока недоступно.',
-      );
+    if (['credit_use'].includes(input.kind))
+      fail(422, 'RENTAL_NOT_ISSUED', 'Зачёт в оплату пока недоступен.');
+    if (
+      (input.kind === 'rent_payment' || input.kind === 'deposit_receipt') &&
+      !summary?.paymentsAllowed &&
+      !invoiceReceipt
+    )
+      fail(422, 'RENTAL_NOT_ISSUED', 'Сначала начните оформление аренды.');
+    if (invoiceReceipt && summary) await this.validateInvoiceReceipt(c, invoiceReceipt, summary);
     if (input.kind === 'initial') {
       const state = await funds(c),
         f = state.items.find((x) => x.id === input.fund);
@@ -392,13 +514,53 @@ export class FinanceService {
     });
   }
   async post(input: FinanceInput, r: AuthRequest) {
+    return this.postOperations(input, [input], r);
+  }
+
+  async postCheckoutReceipt(input: CheckoutReceiptInput, r: AuthRequest) {
+    const { cashRub, bankRub, kind, ...booking } = input;
+    const cash = { ...booking, kind, method: 'cash' as const, amountRub: cashRub };
+    if (kind === 'deposit_receipt' || bankRub === '0') {
+      return this.postOperations(input, [cash], r);
+    }
+    const bank: RentPayment = { ...booking, kind, method: 'bank', amountRub: bankRub };
+    return this.postOperations(input, cashRub === '0' ? [bank] : [cash, bank], r);
+  }
+
+  async postInvoiceReceipt(input: InvoiceReceiptInput, r: AuthRequest) {
+    const { bookingId, customerId, expectedVersion, amountRub, paidOn, reference } = input;
+    const reason = `Поступление по счёту от ${paidOn.split('-').reverse().join('.')}${reference ? ' · № ' + reference : ''}`;
+    return this.postOperations(
+      input,
+      [
+        {
+          bookingId,
+          customerId,
+          expectedVersion,
+          amountRub,
+          kind: 'rent_payment',
+          method: 'bank',
+          reason,
+        },
+      ],
+      r,
+      input,
+    );
+  }
+
+  private async postOperations(
+    fingerprint: FinanceInput | CheckoutReceiptInput | InvoiceReceiptInput,
+    [first, ...remaining]: [FinanceInput, ...RentPayment[]],
+    r: AuthRequest,
+    invoiceReceipt?: InvoiceReceiptInput,
+  ) {
     return this.commands.run(
       r,
       'finance.post',
-      input,
+      fingerprint,
       async (c) => {
         const commandId = `${r.auth!.user.id}:${this.commands.key(r)}`,
-          requestHash = hash(JSON.stringify(input));
+          requestHash = hash(JSON.stringify(fingerprint));
         const existing = (
           await c.query<{ id: number; request_hash: string }>(
             'SELECT id,request_hash FROM financial_operations WHERE command_id=$1',
@@ -410,78 +572,105 @@ export class FinanceService {
             fail(409, 'IDEMPOTENCY_KEY_REUSED', 'Ключ уже использован для другой операции.');
           return { id: existing.id };
         }
-        await this.lock(c, input);
-        const p = await this.plan(c, input),
-          warning = await this.warning(c, input, p);
-        if (
-          warning.negative.length &&
-          (!input.shortfallAcknowledged || input.warningToken !== warning.token)
-        )
-          fail(
-            409,
-            'FUND_SHORTFALL_CONFIRMATION',
-            'Физических денег недостаточно. Проверьте актуальные остатки, подтвердите предупреждение и укажите причину.',
-            warning,
-          );
-        const op = (
-          await c.query<{ id: number }>(
-            `INSERT INTO financial_operations(command_id,request_hash,kind,customer_id,booking_id,actor_id,reason,reversal_of) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-            [
-              commandId,
-              requestHash,
-              input.kind,
-              p.customerId ?? null,
-              p.bookingId ?? null,
-              r.auth!.user.id,
-              input.reason,
-              p.reversalOf ?? null,
-            ],
-          )
-        ).rows[0];
-        let lotId = 0;
-        if (p.newLot)
-          lotId = (
-            await c.query<{ id: number }>(
-              'INSERT INTO finance_lots(customer_id,original_operation_id,origin,method) VALUES ($1,$2,$3,$4) RETURNING id',
-              [p.customerId, op.id, p.newLot.origin, p.newLot.method],
-            )
-          ).rows[0].id;
-        for (const a of p.allocations)
-          await c.query(
-            'INSERT INTO finance_allocations(operation_id,lot_id,bucket,booking_id,amount_rub,fund) VALUES ($1,$2,$3,$4,$5,$6)',
-            [op.id, a.lotId || lotId, a.bucket, a.bookingId, a.amount.toString(), a.fund],
-          );
-        for (const [fund, n] of Object.entries(p.funds)) {
-          if (n === 0n && input.kind !== 'initial') continue;
-          await c.query(
-            'INSERT INTO finance_fund_entries(operation_id,fund,amount_rub,is_initial) VALUES ($1,$2,$3,$4)',
-            [op.id, fund, n.toString(), input.kind === 'initial'],
-          );
-          await c.query('UPDATE finance_funds SET version=version+1 WHERE id=$1', [fund]);
+        await this.lock(c, first);
+        const result = await this.recordOperation(
+          c,
+          first,
+          r,
+          commandId,
+          requestHash,
+          invoiceReceipt,
+        );
+        for (const input of remaining) {
+          await this.recordOperation(c, input, r, commandId + ':' + input.method, requestHash);
         }
-        for (const e of p.external)
-          await c.query(
-            'INSERT INTO finance_external(operation_id,method,amount_rub) VALUES ($1,$2,$3)',
-            [op.id, e.method, e.amount.toString()],
-          );
-        // SQL sums are numeric: explicitly bound aggregate balances, not only individual entries.
-        if (p.customerId) {
-          const totals = (
-            await c.query<{ bucket: AllocationBucket; booking_id: number | null; amount: string }>(
-              `SELECT a.bucket,a.booking_id,sum(a.amount_rub)::text AS amount FROM finance_allocations a JOIN finance_lots l ON l.id=a.lot_id WHERE l.customer_id=$1 GROUP BY a.bucket,a.booking_id`,
-              [p.customerId],
-            )
-          ).rows;
-          for (const total of totals) bounded(BigInt(total.amount));
-        }
-        await recordEvent(c, r, op.id, input.kind, p.bookingId, {
-          reason: input.reason,
-          shortfallAcknowledged: warning.negative.length > 0,
-          negativeFunds: warning.negative,
-        });
-        return { id: op.id };
+        return result;
       },
       false,
     );
+  }
+
+  private async recordOperation(
+    c: PoolClient,
+    input: FinanceInput,
+    r: AuthRequest,
+    commandId: string,
+    requestHash: string,
+    invoiceReceipt?: InvoiceReceiptInput,
+  ) {
+    const p = await this.plan(c, input, invoiceReceipt),
+      warning = await this.warning(c, input, p);
+    if (
+      warning.negative.length &&
+      (!input.shortfallAcknowledged || input.warningToken !== warning.token)
+    )
+      fail(
+        409,
+        'FUND_SHORTFALL_CONFIRMATION',
+        'Физических денег недостаточно. Проверьте актуальные остатки, подтвердите предупреждение и укажите причину.',
+        warning,
+      );
+    const op = (
+      await c.query<{ id: number }>(
+        `INSERT INTO financial_operations(command_id,request_hash,kind,customer_id,booking_id,actor_id,reason,reversal_of) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+        [
+          commandId,
+          requestHash,
+          input.kind,
+          p.customerId ?? null,
+          p.bookingId ?? null,
+          r.auth!.user.id,
+          input.reason,
+          p.reversalOf ?? null,
+        ],
+      )
+    ).rows[0];
+    let lotId = 0;
+    if (p.newLot)
+      lotId = (
+        await c.query<{ id: number }>(
+          'INSERT INTO finance_lots(customer_id,original_operation_id,origin,method) VALUES ($1,$2,$3,$4) RETURNING id',
+          [p.customerId, op.id, p.newLot.origin, p.newLot.method],
+        )
+      ).rows[0].id;
+    for (const a of p.allocations)
+      await c.query(
+        'INSERT INTO finance_allocations(operation_id,lot_id,bucket,booking_id,amount_rub,fund) VALUES ($1,$2,$3,$4,$5,$6)',
+        [op.id, a.lotId || lotId, a.bucket, a.bookingId, a.amount.toString(), a.fund],
+      );
+    for (const [fund, n] of Object.entries(p.funds)) {
+      if (n === 0n && input.kind !== 'initial') continue;
+      await c.query(
+        'INSERT INTO finance_fund_entries(operation_id,fund,amount_rub,is_initial) VALUES ($1,$2,$3,$4)',
+        [op.id, fund, n.toString(), input.kind === 'initial'],
+      );
+      await c.query('UPDATE finance_funds SET version=version+1 WHERE id=$1', [fund]);
+    }
+    for (const e of p.external)
+      await c.query(
+        'INSERT INTO finance_external(operation_id,method,amount_rub) VALUES ($1,$2,$3)',
+        [op.id, e.method, e.amount.toString()],
+      );
+    // SQL sums are numeric: explicitly bound aggregate balances, not only individual entries.
+    if (p.customerId) {
+      const totals = (
+        await c.query<{ bucket: AllocationBucket; booking_id: number | null; amount: string }>(
+          `SELECT a.bucket,a.booking_id,sum(a.amount_rub)::text AS amount FROM finance_allocations a JOIN finance_lots l ON l.id=a.lot_id WHERE l.customer_id=$1 GROUP BY a.bucket,a.booking_id`,
+          [p.customerId],
+        )
+      ).rows;
+      for (const total of totals) bounded(BigInt(total.amount));
+    }
+    await recordEvent(c, r, op.id, input.kind, p.bookingId, {
+      reason: input.reason,
+      shortfallAcknowledged: warning.negative.length > 0,
+      negativeFunds: warning.negative,
+      ...(invoiceReceipt
+        ? {
+            invoiceReceipt: { paidOn: invoiceReceipt.paidOn, reference: invoiceReceipt.reference },
+          }
+        : {}),
+    });
+    return { id: op.id };
   }
 }

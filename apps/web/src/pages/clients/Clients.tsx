@@ -1,3 +1,4 @@
+import { CustomerDocuments } from '../../features/documents/CustomerDocuments';
 import { useState } from 'react';
 import {
   Alert,
@@ -15,15 +16,28 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import { History, PollNotice, useListScroll, usePolling } from '../../catalog';
 import type { Customer } from '../../catalog';
 import { ClientFinance } from '../finance/ClientFinance';
-import { CustomerEditor } from './CustomerEditor';
+import { CustomerEditor } from '../../features/customers/CustomerEditor';
 import type { ClientActionKind } from './ClientNotes';
 import { ClientAction, Notes } from './ClientNotes';
-import { companyLabels, identityLabels } from './customer-fields';
-export { companyLabels, identityLabels } from './customer-fields';
+import {
+  companyFieldGroups,
+  companyLabels,
+  identityLabels,
+  licenseFields,
+  passportFields,
+  personalNameLabels,
+} from '../../features/customers/customer-fields';
+export { companyLabels, identityLabels } from '../../features/customers/customer-fields';
 
 function ClientData({ client }: { client: Customer }) {
   const labels = client.type === 'individual' ? identityLabels : companyLabels;
-  const fieldLabels: Record<string, string> = { ...identityLabels, ...companyLabels, inn: 'ИНН' };
+  const fieldLabels: Record<string, string> = {
+    ...personalNameLabels,
+    ...identityLabels,
+    ...companyLabels,
+    inn: 'ИНН',
+    phone: 'Телефон',
+  };
   const missingFields = client.documentReadiness.missing
     .map((key) => fieldLabels[key] ?? key)
     .join(', ');
@@ -39,9 +53,57 @@ function ClientData({ client }: { client: Customer }) {
       children: client.details[key] || '—',
     })),
   ];
+  const companyItems = [
+    { key: 'displayName', label: 'Название организации', children: client.displayName || '—' },
+    ...items,
+  ];
+  const personalItems = [
+    ...Object.entries(personalNameLabels).map(([key, label]) => ({
+      key,
+      label,
+      children: client.details[key] || '—',
+    })),
+    ...items.slice(0, 2),
+  ];
   return (
     <>
-      <Descriptions bordered column={{ xs: 1, sm: 2 }} items={items} />
+      {client.type === 'individual' ? (
+        <div className="client-data-groups">
+          <section className="customer-form-group" aria-label="Личные данные">
+            <h3>Личные данные</h3>
+            <Descriptions bordered column={{ xs: 1, sm: 2 }} items={personalItems} />
+          </section>
+          <section className="customer-form-group" aria-label="Паспорт">
+            <h3>Паспорт</h3>
+            <Descriptions
+              bordered
+              column={{ xs: 1, sm: 2 }}
+              items={items.filter(({ key }) => passportFields.includes(key))}
+            />
+          </section>
+          <section className="customer-form-group" aria-label="Водительское удостоверение">
+            <h3>Водительское удостоверение</h3>
+            <Descriptions
+              bordered
+              column={{ xs: 1, sm: 2 }}
+              items={items.filter(({ key }) => licenseFields.includes(key))}
+            />
+          </section>
+        </div>
+      ) : (
+        <div className="client-data-groups">
+          {companyFieldGroups.map(({ key, title, fields }) => (
+            <section key={key} className="customer-form-group" aria-label={title}>
+              <h3>{title}</h3>
+              <Descriptions
+                bordered
+                column={{ xs: 1, sm: 2 }}
+                items={companyItems.filter((item) => fields.some((field) => field === item.key))}
+              />
+            </section>
+          ))}
+        </div>
+      )}
       <Alert
         className="notice"
         type={client.documentReadiness.ready ? 'success' : 'info'}
@@ -243,7 +305,11 @@ export function ClientDetail() {
             label: 'Заметки',
             children: <Notes key={client.version} client={client} onAction={openAction} />,
           },
-          { key: 'documents', label: 'Документы', disabled: true },
+          {
+            key: 'documents',
+            label: 'Документы',
+            children: <CustomerDocuments key={client.id} id={client.id} />,
+          },
           {
             key: 'history',
             label: 'История изменений',
@@ -252,7 +318,7 @@ export function ClientDetail() {
         ]}
       />
       <Typography.Paragraph type="secondary">
-        Фактические аренды, штрафы и файлы подключаются на следующих этапах.
+        Фактические аренды и штрафы подключаются на следующих этапах.
       </Typography.Paragraph>
       {actionModal}
     </section>

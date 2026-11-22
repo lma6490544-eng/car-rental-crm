@@ -19,6 +19,18 @@ import { BookingQueryService } from './scheduling/booking-query.service';
 import { CalendarService } from './scheduling/calendar.service';
 import { FinanceController } from './finance/finance.controller';
 import { FinanceService } from './finance/finance.service';
+import { DocumentsController } from './documents/documents.controller';
+import { DocumentsQueryService } from './documents/documents-query.service';
+import { ContractsService } from './documents/contracts.service';
+import { InspectionsService } from './documents/inspections.service';
+import { PrivateFilesService } from './documents/private-files.service';
+import { PrivateStorage } from './documents/private-storage';
+import { DocumentPrintService } from './documents/document-print.service';
+import { ActsService } from './documents/acts.service';
+import { CheckoutService } from './documents/checkout.service';
+import { DocumentWorker } from './documents/document-worker';
+import { DocumentSchemaGuard } from './documents/document-schema.guard';
+import { AccountingEmailWorker } from './scheduling/accounting-email.worker';
 
 @Module({
   controllers: [
@@ -32,6 +44,7 @@ import { FinanceService } from './finance/finance.service';
     PricingController,
     SchedulingController,
     FinanceController,
+    DocumentsController,
   ],
   providers: [
     DatabaseService,
@@ -43,6 +56,17 @@ import { FinanceService } from './finance/finance.service';
     BookingQueryService,
     CalendarService,
     FinanceService,
+    ContractsService,
+    DocumentsQueryService,
+    InspectionsService,
+    PrivateFilesService,
+    PrivateStorage,
+    DocumentWorker,
+    AccountingEmailWorker,
+    CheckoutService,
+    ActsService,
+    DocumentPrintService,
+    DocumentSchemaGuard,
     { provide: APP_GUARD, useClass: SessionGuard },
   ],
 })

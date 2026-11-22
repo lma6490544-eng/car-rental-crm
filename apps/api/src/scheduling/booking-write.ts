@@ -67,6 +67,23 @@ export async function lockBookingCustomer(
 
   return lockedCustomer;
 }
+export async function assignedVehicleModel(
+  c: PoolClient,
+  vehicleId: number,
+  models: number[],
+  lock = false,
+) {
+  const vehicle = (
+    await c.query<{ model_id: number; archived_at: Date | null }>(
+      'SELECT model_id,archived_at FROM vehicles WHERE id=$1' + (lock ? ' FOR SHARE' : ''),
+      [vehicleId],
+    )
+  ).rows[0];
+  if (!vehicle || vehicle.archived_at || !models.includes(vehicle.model_id))
+    fail(422, 'VEHICLE_NOT_ELIGIBLE', 'Машина не входит в допустимый набор.');
+  return vehicle.model_id;
+}
+
 export async function prepareBookingTerms(
   c: PoolClient,
   s: SchedulingService,
@@ -79,9 +96,20 @@ export async function prepareBookingTerms(
 ) {
   if (!!input.quoteId === !!input.pricing)
     fail(400, 'VALIDATION_ERROR', 'Передайте условия или исходный расчёт.');
+  const vehicleId = input.target.type === 'vehicle' ? input.target.id : input.vehicleId;
+  const assignedModel = vehicleId
+    ? await assignedVehicleModel(c, vehicleId, models, true)
+    : undefined;
   let quote: PricingQuoteRow | undefined;
   if (input.pricing) {
-    const preview = await previewBooking(c, input.target, input.pricing, models, r.auth!.user.id);
+    const preview = await previewBooking(
+      c,
+      input.target,
+      input.pricing,
+      models,
+      r.auth!.user.id,
+      assignedModel,
+    );
     if (preview.previewToken !== input.previewToken)
       fail(409, 'QUOTE_STALE', 'Условия или тариф изменились. Дождитесь нового расчёта.');
     if (
@@ -150,14 +178,6 @@ export async function prepareBookingTerms(
       'BOOKING_QUOTE_INVALID',
       'Условия брони не должны содержать фактический возврат и доплаты.',
     );
-  const vehicleId = input.target.type === 'vehicle' ? input.target.id : input.vehicleId;
-  if (vehicleId) {
-    const v = (
-      await c.query('SELECT model_id,archived_at FROM vehicles WHERE id=$1 FOR SHARE', [vehicleId])
-    ).rows[0];
-    if (!v || v.archived_at || !models.includes(v.model_id))
-      fail(422, 'VEHICLE_NOT_ELIGIBLE', 'Машина не входит в допустимый набор.');
-  }
   if (vehicleId) await s.assertAssignable(c, vehicleId, startAt, endAt, bookingId);
   const result = await s.evaluate(c, {
     id: bookingId,

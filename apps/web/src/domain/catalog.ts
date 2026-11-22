@@ -9,7 +9,7 @@ export type Customer = {
   blockedReason: string;
   version: number;
   details: Record<string, string>;
-  documentReadiness: { ready: boolean; missing: string[] };
+  documentReadiness: { ready: boolean; missing: string[]; required: string[] };
 };
 export type Vehicle = {
   id: number;
@@ -24,6 +24,7 @@ export type Vehicle = {
   year: number;
   bodyType: string;
   transmission: 'automatic' | 'manual' | null;
+  hasCasco?: boolean | null;
   currentMileageKm: number | null;
   nextMaintenanceDueKm: number | null;
   isReady: boolean;

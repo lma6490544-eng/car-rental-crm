@@ -132,6 +132,7 @@ export const vehicleInput = z
       .max(new Date().getUTCFullYear() + 1),
     bodyType: z.enum(['sedan', 'hatchback', 'compact_van', 'cargo_minibus']),
     transmission: z.enum(['automatic', 'manual']).nullable().default(null),
+    hasCasco: z.boolean().nullable().optional(),
     currentMileageKm: z.number().int().min(0).max(10000000).nullable(),
     nextMaintenanceDueKm: z.number().int().min(0).max(10000000).nullable(),
     isReady: z.boolean().default(true),
@@ -197,10 +198,18 @@ export const serviceEditInput = z
     (v) => v.performedOn <= new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Moscow' }),
     { message: 'Дата выполненной процедуры не может быть в будущем.', path: ['performedOn'] },
   );
-export function documentReadiness(type: string, data: Record<string, string>, inn: string) {
+export function documentReadiness(
+  type: string,
+  data: Record<string, string>,
+  inn: string,
+  phone: string,
+) {
   const required =
     type === 'individual'
       ? [
+          'lastName',
+          'firstName',
+          'phone',
           'birthDate',
           'passportSeries',
           'passportNumber',
@@ -211,6 +220,7 @@ export function documentReadiness(type: string, data: Record<string, string>, in
           'licenseDate',
         ]
       : [
+          'inn',
           'kpp',
           'ogrn',
           'legalAddress',
@@ -221,7 +231,7 @@ export function documentReadiness(type: string, data: Record<string, string>, in
           'representativeName',
           'authority',
         ];
-  const missing = required.filter((key) => !data[key]);
-  if (type === 'company' && !inn) missing.push('inn');
-  return { ready: missing.length === 0, missing };
+  const values: Record<string, string> = { ...data, inn, phone };
+  const missing = required.filter((key) => !values[key]?.trim());
+  return { ready: missing.length === 0, missing, required };
 }

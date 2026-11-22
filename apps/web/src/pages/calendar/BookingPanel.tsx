@@ -1,5 +1,5 @@
 import BookingForm from '../booking-form/BookingForm';
-import type { BookingOptions, BookingDetail } from '../../contracts';
+import type { BookingOptions, BookingDetail, BookingFinance, CommandResult } from '../../contracts';
 import { useContext, useEffect, useEffectEvent, useRef, useState } from 'react';
 import {
   Alert,
@@ -10,7 +10,6 @@ import {
   Input,
   Modal,
   Popover,
-  Select,
   Space,
   Tag,
   Tooltip,
@@ -19,6 +18,7 @@ import {
   CalendarOutlined,
   CarOutlined,
   DownOutlined,
+  MailOutlined,
   UserOutlined,
   WalletOutlined,
 } from '@ant-design/icons';
@@ -28,10 +28,30 @@ import { ClientFinance } from '../finance/ClientFinance';
 import { rub } from '../../shared/formatters';
 import { SwapOutlined } from '@ant-design/icons';
 import { ConflictList } from '../../features/booking/Conflicts';
-import { compactVehicleOption } from '../../features/vehicles/CompactVehicleOption';
+import { VehicleAssignmentDialog } from './VehicleAssignmentDialog';
+import type { VehicleMove } from './VehicleAssignmentDialog';
 import Action, { CommandLock } from './CalendarAction';
 import { local } from './dates';
+import type { AccountingEmailStatus } from './AccountingEmailNotice';
+import { BookingInvoicePayment } from './BookingInvoicePayment';
 export type BookingHeading = { id: number; status: string; createdAt?: string };
+const accountingStatusLabels: Record<
+  AccountingEmailStatus['status'],
+  { label: string; color?: 'processing' | 'success' | 'error' | 'warning' }
+> = {
+  none: { label: 'Не отправлено' },
+  pending: { label: 'В очереди', color: 'processing' },
+  running: { label: 'Отправляется', color: 'processing' },
+  done: { label: 'Отправлено', color: 'success' },
+  failed: { label: 'Ошибка отправки', color: 'error' },
+  unknown: { label: 'Отправка не подтверждена', color: 'warning' },
+  cancelled: { label: 'Не отправлено' },
+};
+const accountingSentTime = new Intl.DateTimeFormat('ru-RU', {
+  timeZone: 'Europe/Moscow',
+  dateStyle: 'short',
+  timeStyle: 'short',
+});
 const bookingDate = (value: string, year: boolean) =>
   new Date(value)
     .toLocaleString('ru-RU', {
@@ -61,14 +81,20 @@ function bookingDuration(start: string, end: string) {
 export default function Booking({
   id,
   onDone,
+  onAccountingEmailRequested,
   onMove,
   action,
   onHeading,
+  onCheckout,
+  checkoutPhase,
 }: {
   id: number;
   onDone: () => void;
-  onMove: (request: { bookingId: number; vehicleId: number; startAt: string }) => void;
+  onAccountingEmailRequested: (result: CommandResult) => void;
+  onMove: (request: VehicleMove) => void;
   action?: 'assign' | 'edit';
+  onCheckout: () => void;
+  checkoutPhase?: 'started' | 'issued';
   onHeading: (value: BookingHeading) => void;
 }) {
   const p = usePolling<BookingDetail>('/bookings/' + id),
@@ -79,7 +105,12 @@ export default function Booking({
   const [reason, setReason] = useState('');
   const expected = useRef<number | undefined>(undefined),
     b = p.data;
-  const bookingStatus = b?.status;
+  const accountingEmailPath = `/bookings/${id}/accounting-email`;
+  const accountingEmail = usePolling<AccountingEmailStatus>(b ? accountingEmailPath : undefined);
+  const invoiceFinance = usePolling<BookingFinance>(
+    accountingEmail.data?.isCompany ? `/bookings/${id}/finance` : undefined,
+  );
+  const bookingStatus = checkoutPhase === 'issued' ? 'active' : b?.status;
   const bookingCreatedAt = b?.created_at;
   useEffect(() => {
     if (bookingStatus !== undefined)
@@ -113,40 +144,9 @@ export default function Booking({
   const targetId =
     b.target_vehicle_id ?? b.target_model_id ?? b.target_brand_id ?? b.target_group_id;
   const assigned = fleet.data?.vehicles.find((v) => v.id === b.vehicle_id);
-  const statusById = new Map<number | null, BookingDetail['vehicleOptions'][number]>(
-    (b.vehicleOptions ?? []).map((v) => [v.id, v]),
-  );
-  const groupByModel = new Map<number | undefined, number>(
-    (fleet.data?.models ?? []).map((m) => [m.id, m.pricingGroupId]),
-  );
-  const currentTariffId =
-    b.terms[0]?.snapshot.periods?.[0]?.pricingGroup?.id ??
-    statusById.get(b.vehicle_id)?.pricingGroupId ??
-    groupByModel.get(assigned?.modelId);
-  const choices = (fleet.data?.vehicles ?? []).map((v) => {
-    const status = statusById.get(v.id),
-      busy = !!status?.busy,
-      notReady = !v.isReady;
-    return {
-      ...compactVehicleOption(v),
-      pricingGroupId: status?.pricingGroupId ?? groupByModel.get(v.modelId),
-      free: !busy && !notReady,
-      disabled: busy || notReady,
-      title: busy ? 'Занят на выбранный период' : notReady ? 'Не готов к выдаче' : undefined,
-    };
-  });
-  const assignmentOptions = [
-    {
-      label: 'Тот же тариф',
-      options: choices.filter((v) => v.free && v.pricingGroupId === currentTariffId),
-    },
-    {
-      label: 'Другие автомобили',
-      options: choices.filter((v) => v.free && v.pricingGroupId !== currentTariffId),
-    },
-    { label: 'Недоступны на эти даты', options: choices.filter((v) => !v.free) },
-  ].filter((group) => group.options.length);
   const showYear = local(b.start_at).slice(0, 4) !== local(b.end_at).slice(0, 4);
+  const email = accountingEmail.data;
+  const emailStatus = email?.isCompany ? accountingStatusLabels[email.status] : undefined;
   return (
     <div className="booking-details">
       <PollNotice {...p} />
@@ -200,7 +200,45 @@ export default function Booking({
             Согласованная стоимость: <strong>{rub(b.terms[0]?.snapshot.finalTotalRub)}</strong>
           </span>
         </div>
+        {emailStatus && (
+          <div className="booking-overview-row">
+            <MailOutlined aria-hidden />
+            <Space wrap>
+              <span>Данные для счёта</span>
+              <Tag color={emailStatus.color}>{emailStatus.label}</Tag>
+              {email?.sentAt && (
+                <time dateTime={email.sentAt}>
+                  {accountingSentTime.format(new Date(email.sentAt))} МСК
+                </time>
+              )}
+            </Space>
+          </div>
+        )}
       </section>
+      {invoiceFinance.data?.invoicePayment && (
+        <BookingInvoicePayment
+          payment={invoiceFinance.data.invoicePayment}
+          summary={invoiceFinance.data.summary}
+          onDone={() => {
+            void invoiceFinance.reload();
+            onDone();
+          }}
+        />
+      )}
+      {b.status === 'confirmed' && !!b.vehicle_id && (
+        <Action
+          path={accountingEmailPath}
+          command="bookings.accounting-email"
+          label="Выставить счёт"
+          visible={accountingEmail.data?.canRequest === true}
+          body={() => ({ expectedVersion: b.version })}
+          revision={String(b.version)}
+          onDone={(result) => {
+            onAccountingEmailRequested(result);
+            void accountingEmail.reload();
+          }}
+        />
+      )}
       {!!b.problemReasons?.length && (
         <Popover
           trigger={['hover', 'click']}
@@ -249,7 +287,7 @@ export default function Booking({
           }
         />
       )}
-      {b.status === 'confirmed' && (
+      {b.status === 'confirmed' && checkoutPhase !== 'issued' && (
         <div className="booking-primary-actions">
           <Button type="primary" onClick={() => setEdit(!edit)}>
             {edit ? 'Закрыть редактирование' : 'Изменить условия'}
@@ -257,12 +295,22 @@ export default function Booking({
           <Dropdown
             trigger={['click']}
             menu={{
-              items: [{ key: 'cancel', label: 'Отменить бронь', danger: true }],
-              onClick: () => open('cancel'),
+              items: [
+                ...(b.vehicle_id
+                  ? [
+                      {
+                        key: 'checkout',
+                        label: checkoutPhase ? 'Открыть договор' : 'Создать договор',
+                      },
+                    ]
+                  : []),
+                { key: 'cancel', label: 'Отменить бронь', danger: true },
+              ],
+              onClick: ({ key }) => (key === 'checkout' ? onCheckout() : open('cancel')),
             }}
           >
-            <Button danger aria-label="Действия с бронью">
-              Отменить бронь <DownOutlined />
+            <Button aria-label="Действия с бронью">
+              Действия <DownOutlined />
             </Button>
           </Dropdown>
         </div>
@@ -281,9 +329,18 @@ export default function Booking({
           onDone={done}
         />
       )}
+      {dialog?.kind === 'assign' && (
+        <VehicleAssignmentDialog
+          booking={b}
+          fleet={fleet.data}
+          disabled={lock.locked}
+          onClose={() => setDialog(null)}
+          onMove={onMove}
+        />
+      )}
       <Modal
-        open={!!dialog}
-        title={dialog?.kind === 'assign' ? 'Выберите автомобиль' : 'Отменить бронь'}
+        open={dialog?.kind === 'cancel'}
+        title="Отменить бронь"
         footer={null}
         closable={!lock.locked}
         maskClosable={!lock.locked}
@@ -293,60 +350,30 @@ export default function Booking({
         }}
         destroyOnClose
       >
-        {dialog && (
+        {dialog?.kind === 'cancel' && (
           <>
-            {dialog.kind === 'assign' ? (
-              <>
-                <Select
-                  aria-label="Назначаемый автомобиль"
-                  showSearch
-                  optionFilterProp="searchLabel"
-                  style={{ width: '100%' }}
-                  placeholder="Найти модель или номер"
-                  value={b.vehicle_id ?? undefined}
-                  onChange={(v) => {
-                    if (v && v !== b.vehicle_id) {
-                      setDialog(null);
-                      onMove({
-                        bookingId: id,
-                        vehicleId: v,
-                        startAt: new Date(b.start_at).toISOString(),
-                      });
-                    }
-                  }}
-                  options={assignmentOptions}
+            <Form layout="vertical">
+              <Form.Item label="Причина изменения" required>
+                <Input
+                  aria-label="Причина изменения"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  maxLength={1000}
                 />
-              </>
-            ) : (
-              <>
-                <Form layout="vertical">
-                  <Form.Item label="Причина изменения" required>
-                    <Input
-                      aria-label="Причина изменения"
-                      value={reason}
-                      onChange={(e) => setReason(e.target.value)}
-                      maxLength={1000}
-                    />
-                  </Form.Item>
-                </Form>
-                <Action
-                  path={'/bookings/' + id + '/cancel'}
-                  command="bookings.cancel"
-                  label="Подтвердить отмену"
-                  disabled={!reason.trim()}
-                  revision={JSON.stringify({ reason, dialog })}
-                  body={() => ({ expectedVersion: dialog.version, reason })}
-                  onDone={done}
-                />
-              </>
-            )}
+              </Form.Item>
+            </Form>
+            <Action
+              path={'/bookings/' + id + '/cancel'}
+              command="bookings.cancel"
+              label="Подтвердить отмену"
+              disabled={!reason.trim()}
+              revision={JSON.stringify({ reason, dialog })}
+              body={() => ({ expectedVersion: dialog.version, reason })}
+              onDone={done}
+            />
           </>
         )}
       </Modal>
-      <section className="booking-finance-section">
-        <h3>Стоимость и денежная история</h3>
-        <ClientFinance compact customerId={b.customer_id} bookingId={id} onLock={lock.setLocked} />
-      </section>
       <Collapse
         className="booking-history"
         size="small"
@@ -355,6 +382,18 @@ export default function Booking({
             key: 'history',
             label: 'История',
             children: <History path={'/bookings/' + id + '/history'} />,
+          },
+          {
+            key: 'finance',
+            label: 'Денежные операции',
+            children: (
+              <ClientFinance
+                compact
+                customerId={b.customer_id}
+                bookingId={id}
+                onLock={lock.setLocked}
+              />
+            ),
           },
         ]}
       />

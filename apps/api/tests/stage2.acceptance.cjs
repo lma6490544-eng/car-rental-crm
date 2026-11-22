@@ -405,7 +405,10 @@ test('Stage 2 PostgreSQL, HTTP and browser acceptance', { timeout: 240000 }, asy
   await t.test('polling detects other operator and preserves open form', async () => {
     const id = page.url().split('/').pop();
     await page.getByRole('button', { name: 'Редактировать', exact: true }).click();
-    await page.getByLabel('ФИО', { exact: true }).fill('Несохранённый ввод');
+    assert.equal(await page.getByLabel('Фамилия', { exact: true }).inputValue(), 'Браузерный');
+    assert.equal(await page.getByLabel('Имя', { exact: true }).inputValue(), 'клиент');
+    assert.equal(await page.getByLabel('Отчество', { exact: true }).inputValue(), '');
+    await page.getByLabel('Имя', { exact: true }).fill('Несохранённый ввод');
     assert.equal(
       (
         await req('/customers/' + id, {
@@ -421,7 +424,7 @@ test('Stage 2 PostgreSQL, HTTP and browser acceptance', { timeout: 240000 }, asy
     await page
       .getByText('Запись изменена другим сотрудником. Ваш ввод сохранён.', { exact: true })
       .waitFor({ timeout: 12000 });
-    assert.equal(await page.getByLabel('ФИО', { exact: true }).inputValue(), 'Несохранённый ввод');
+    assert.equal(await page.getByLabel('Имя', { exact: true }).inputValue(), 'Несохранённый ввод');
     assert.equal(
       await page.getByRole('button', { name: 'Сохранить', exact: true }).isDisabled(),
       true,
@@ -429,6 +432,11 @@ test('Stage 2 PostgreSQL, HTTP and browser acceptance', { timeout: 240000 }, asy
     await page.screenshot({ path: path.join(output, 'stage2-conflict.png'), fullPage: true });
     await page.getByRole('button', { name: 'Отмена', exact: true }).click();
     await page.getByRole('heading', { name: 'Другой оператор', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Редактировать', exact: true }).click();
+    await page.getByLabel('Имя', { exact: true }).fill('Алексей');
+    assert.equal(await page.getByLabel('Отчество', { exact: true }).inputValue(), '');
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await page.getByRole('heading', { name: 'Другой Алексей', exact: true }).waitFor();
   });
   await t.test('fleet list, card, history and return keep filter', async () => {
     await page.goto(origin + '/fleet?bodyType=cargo_minibus&sort=maintenance');

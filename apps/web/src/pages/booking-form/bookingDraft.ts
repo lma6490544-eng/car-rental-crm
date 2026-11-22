@@ -13,20 +13,31 @@ export function buildBookingDraft(
   initial?: BookingInitial,
 ) {
   const type = selected?.type ?? values.type ?? 'individual';
-  const target = advanced
-    ? values.advancedTarget
-      ? {
-          type: String(values.advancedTarget).split(':')[0],
-          id: Number(String(values.advancedTarget).split(':')[1]),
-        }
-      : undefined
-    : values.vehicleId
-      ? { type: 'vehicle', id: values.vehicleId }
-      : values.modelId
-        ? { type: 'model', id: values.modelId }
-        : values.brandId
-          ? { type: 'brand', id: values.brandId }
-          : undefined;
+  const [existingTargetType, existingTargetId] = initial?.target?.split(':') ?? [];
+  const existingTarget =
+    existingTargetType && existingTargetId
+      ? { type: existingTargetType, id: Number(existingTargetId) }
+      : undefined;
+  const target = initial?.termsOnly
+    ? existingTarget
+    : advanced
+      ? values.advancedTarget
+        ? {
+            type: String(values.advancedTarget).split(':')[0],
+            id: Number(String(values.advancedTarget).split(':')[1]),
+          }
+        : undefined
+      : values.vehicleId
+        ? { type: 'vehicle', id: values.vehicleId }
+        : values.modelId
+          ? { type: 'model', id: values.modelId }
+          : values.brandId
+            ? { type: 'brand', id: values.brandId }
+            : undefined;
+  const assignedVehicle =
+    initial?.termsOnly && target?.type !== 'vehicle' && initial.vehicleId
+      ? { vehicleId: initial.vehicleId }
+      : {};
   let scheduleKey = '';
   try {
     if (
@@ -38,6 +49,7 @@ export function buildBookingDraft(
     )
       scheduleKey = JSON.stringify({
         target,
+        ...assignedVehicle,
         startAt: iso(values.start),
         endAt: new Date(Date.parse(iso(values.start)) + values.days * DAY_MS).toISOString(),
         ...(initial?.bookingId ? { bookingId: initial.bookingId } : {}),
@@ -64,6 +76,7 @@ export function buildBookingDraft(
     hasFree = !!clean(values.freeDays),
     loyalty = hasOverrides || hasFree;
   const requiresVehicle =
+    !initial?.termsOnly &&
     !advanced &&
     !values.modelId &&
     new Set(
@@ -87,14 +100,13 @@ export function buildBookingDraft(
     values.days > 0 &&
     values.days <= 3660 &&
     [100, 250, 400].includes(values.package) &&
-    customerComplete &&
-    phoneValid &&
-    !selecting &&
-    (!initial?.customerId || !!selected) &&
+    (initial?.termsOnly ||
+      (customerComplete && phoneValid && !selecting && (!initial?.customerId || !!selected))) &&
     (!loyalty || !!clean(values.loyaltyReason));
   let draft:
     | {
         target: { type: string; id: number } | undefined;
+        vehicleId?: number;
         pricing: {
           startAt: string;
           contractDays: number;
@@ -109,6 +121,7 @@ export function buildBookingDraft(
     try {
       draft = {
         target,
+        ...assignedVehicle,
         pricing: {
           startAt: iso(values.start),
           contractDays: values.days,

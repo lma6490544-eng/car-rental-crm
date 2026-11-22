@@ -29,7 +29,11 @@ import {
 } from '../catalog';
 import { PlateInput, plateCanonical, platePattern } from '../formats';
 import ServiceRecords from './ServiceRecords';
-type VehicleFormValues = Partial<Vehicle> & { expectedVersion?: number; reason?: string };
+type VehicleFormValues = Partial<Omit<Vehicle, 'hasCasco'>> & {
+  casco?: string;
+  expectedVersion?: number;
+  reason?: string;
+};
 type VehicleDetails = Vehicle & { activeBookingIds: number[] };
 
 function AssignedBookingsWarning({ bookingIds }: { bookingIds: number[] }) {
@@ -94,7 +98,11 @@ function VehicleEditor({
       form={form}
       initial={
         vehicle
-          ? { ...vehicle, vin: vehicle.vin ?? '' }
+          ? {
+              ...vehicle,
+              vin: vehicle.vin ?? '',
+              casco: vehicle.hasCasco == null ? 'unknown' : vehicle.hasCasco ? 'yes' : 'no',
+            }
           : {
               isReady: true,
               needsWash: false,
@@ -137,6 +145,7 @@ function VehicleEditor({
         year,
         bodyType,
         transmission,
+        casco,
         currentMileageKm,
         nextMaintenanceDueKm,
         isReady,
@@ -152,6 +161,7 @@ function VehicleEditor({
           year,
           bodyType,
           transmission,
+          hasCasco: casco === 'yes' ? true : casco === 'no' ? false : null,
           currentMileageKm: currentMileageKm ?? null,
           nextMaintenanceDueKm: nextMaintenanceDueKm ?? null,
           isReady,
@@ -232,6 +242,15 @@ function VehicleEditor({
         >
           <Select
             options={Object.entries(transmissionNames).map(([value, label]) => ({ value, label }))}
+          />
+        </Form.Item>
+        <Form.Item name="casco" label="КАСКО">
+          <Select
+            options={[
+              { value: 'unknown', label: 'Не указано' },
+              { value: 'yes', label: 'Есть' },
+              { value: 'no', label: 'Нет' },
+            ]}
           />
         </Form.Item>
         <Form.Item name="currentMileageKm" label="Текущий пробег, км" extra="Пусто — неизвестен">
@@ -527,6 +546,11 @@ export function VehicleDetail() {
                     children: transmissionNames[v.transmission ?? ''] ?? 'Не указана',
                   },
                   { key: 'pricing', label: 'Тарифная группа', children: v.pricingGroupName },
+                  {
+                    key: 'casco',
+                    label: 'КАСКО',
+                    children: v.hasCasco == null ? 'Не указано' : v.hasCasco ? 'Есть' : 'Нет',
+                  },
                   { key: 'tank', label: 'Бак', children: v.tankLiters + ' л' },
                   {
                     key: 'mileage',

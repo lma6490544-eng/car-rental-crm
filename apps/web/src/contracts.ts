@@ -78,7 +78,7 @@ export type Calculation = {
   }[];
 };
 
-export type CommandResult = { id: number };
+export type CommandResult = { id: number; version?: number; accountingEmailRequested?: true };
 export type CustomerMatch = Pick<Customer, 'id' | 'type' | 'displayName' | 'phone' | 'isBlocked'>;
 export type BookingVehicle = {
   id: number;
@@ -101,6 +101,9 @@ export type Availability = {
   token: string;
 };
 export type ScheduleEvent = {
+  accountingEmailUnsent?: true;
+  invoicePayment?: RentPaymentProgress;
+  checkoutPhase?: 'started' | 'issued';
   id: number | string;
   vehicle_id: number | null;
   booking_id: number | null;
@@ -143,7 +146,10 @@ export type CalendarVehicle = {
   next_maintenance_due_km: number | null;
 };
 export type CalendarBooking = Omit<Inspection, 'alternatives'> & {
+  accountingEmailUnsent?: true;
+  invoicePayment?: RentPaymentProgress;
   id: number;
+  checkoutPhase?: ScheduleEvent['checkoutPhase'];
   version: number;
   start_at: string;
   end_at: string;
@@ -198,10 +204,21 @@ export type MovePreview = Inspection & {
 export type CalendarPanel =
   | { kind: 'create'; vehicleId?: number; start?: string }
   | { kind: 'booking'; id: number; action?: 'assign' | 'edit' }
+  | { kind: 'contract'; id: number; action?: 'start' | 'complete' }
   | { kind: 'vehicle'; id: number }
   | { kind: 'problems' }
   | null;
 
+export type RentPaymentProgress = {
+  status: 'unpaid' | 'partial' | 'paid' | 'not_required';
+  priceRub: string;
+  receivedRub: string;
+  remainingRub: string;
+};
+export type BookingFinance = {
+  summary: FinancialSummary;
+  invoicePayment?: RentPaymentProgress;
+};
 export type FinancialSummary = {
   bookingId: number;
   customerId: number;

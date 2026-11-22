@@ -1200,6 +1200,7 @@ test('Stage 4 PostgreSQL commands and constraints', { timeout: 360000 }, async (
           fullPage: true,
         });
         await page.getByRole('button', { name: 'Создать бронь', exact: true }).click();
+        await page.getByRole('button', { name: 'Нет, сохранить без счёта', exact: true }).click();
         await waitForBooking();
         const companyAfter = (
           await db.pool.query('SELECT * FROM customers WHERE id=$1', [company.id])

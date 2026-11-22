@@ -1,17 +1,20 @@
 import type { ReactNode } from 'react';
-import { Button, Popover } from 'antd';
-import { InfoCircleOutlined } from '@ant-design/icons';
+import { Button } from 'antd';
 import type { Calculation } from '../../contracts';
-import { dateText } from '../../catalog';
+import { RentalPriceInfo } from '../../features/booking/RentalPriceInfo';
 import { rub } from '../../shared/formatters';
 export function BookingFooter({
   calculation,
   calculating,
   saveAction,
+  showSave = true,
+  saveLabel = 'Создать бронь',
 }: {
   calculation?: Calculation;
   calculating: boolean;
   saveAction: ReactNode;
+  showSave?: boolean;
+  saveLabel?: string;
 }) {
   return (
     <div className="booking-create-footer">
@@ -21,34 +24,18 @@ export function BookingFooter({
           <strong>
             {calculating ? 'Расчёт…' : calculation ? rub(calculation.finalTotalRub) : '— ₽'}
           </strong>
-          {calculation && (
-            <Popover
-              trigger={['hover', 'click']}
-              content={
-                <div className="booking-price-details">
-                  Лимит: {calculation.effectiveMileageLimitKm} км
-                  <p>
-                    {dateText(calculation.startAt)} — {dateText(calculation.agreedReturnAt)}
-                  </p>
-                </div>
-              }
-            >
-              <Button
-                type="text"
-                aria-label="Детализация стоимости"
-                icon={<InfoCircleOutlined />}
-              />
-            </Popover>
-          )}
+          {calculation && <RentalPriceInfo calculation={calculation} />}
         </div>
       </div>
-      <div className="booking-create-submit">
-        {saveAction || (
-          <Button type="primary" disabled>
-            Создать бронь
-          </Button>
-        )}
-      </div>
+      {showSave && (
+        <div className="booking-create-submit">
+          {saveAction || (
+            <Button type="primary" disabled>
+              {saveLabel}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

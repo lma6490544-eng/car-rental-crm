@@ -10,8 +10,11 @@ export type ActionProps = {
   revision?: string;
   riskLabel?: string;
   onAvailabilityChanged?: () => void;
+  invoicePrompt?: 'now' | 'no-vehicle';
+  visible?: boolean;
 };
 export type BookingInitial = {
+  termsOnly?: boolean;
   target?: string;
   calculation?: Calculation;
   start?: string;

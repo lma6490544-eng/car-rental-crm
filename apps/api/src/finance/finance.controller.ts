@@ -1,9 +1,9 @@
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import { z } from 'zod';
 import { AuthRequest, idSchema, parse } from '../platform/security';
-import { financeInput } from './finance.dto';
+import { checkoutReceiptInput, financeInput, invoiceReceiptInput } from './finance.dto';
 import { FinanceService } from './finance.service';
-import { bookingSummary, funds } from './ledger';
+import { funds } from './ledger';
 
 @Controller()
 export class FinanceController {
@@ -26,10 +26,14 @@ export class FinanceController {
   }
   @Get('bookings/:id/finance') booking(@Param('id') raw: string) {
     const id = parse(idSchema, raw);
-    return this.read(async (c) => ({
-      summary: await bookingSummary(c, id),
-      ...(await this.finance.journal(c, undefined, id)),
-    }));
+    return this.read(async (c) => {
+      const summary = await this.finance.checkoutSummary(c, id);
+      return {
+        summary,
+        invoicePayment: await this.finance.invoicePaymentProgress(c, summary),
+        ...(await this.finance.journal(c, undefined, id)),
+      };
+    });
   }
   @Get('customers/:id/finance') customer(@Param('id') raw: string) {
     return this.read((c) => this.finance.customer(c, parse(idSchema, raw)));
@@ -39,5 +43,17 @@ export class FinanceController {
   }
   @Post('financial-operations') post(@Body() raw: unknown, @Req() r: AuthRequest) {
     return this.finance.post(parse(financeInput, raw), r);
+  }
+  @Post('financial-operations/checkout-receipt') checkoutReceipt(
+    @Body() raw: unknown,
+    @Req() r: AuthRequest,
+  ) {
+    return this.finance.postCheckoutReceipt(parse(checkoutReceiptInput, raw), r);
+  }
+  @Post('financial-operations/invoice-receipt') invoiceReceipt(
+    @Body() raw: unknown,
+    @Req() r: AuthRequest,
+  ) {
+    return this.finance.postInvoiceReceipt(parse(invoiceReceiptInput, raw), r);
   }
 }
