@@ -106,6 +106,10 @@ export class AuthController {
     await this.db.transaction(async (client) => {
       await this.commands.authorize(client, request);
       await client.query(
+        'DELETE FROM push_subscriptions WHERE session_id=(SELECT id FROM sessions WHERE token_hash=$1)',
+        [request.auth!.tokenHash],
+      );
+      await client.query(
         'UPDATE sessions SET revoked_at=now() WHERE token_hash=$1 AND revoked_at IS NULL',
         [request.auth!.tokenHash],
       );

@@ -202,10 +202,14 @@ export class DocumentWorker implements OnApplicationBootstrap, OnApplicationShut
 
   private async retire(job: Job, id: string) {
     const { rowCount } = await this.db.pool.query(
-      "UPDATE private_files SET status='deleted' WHERE id=$1 AND category IN ('contract','inspection_act')",
+      `UPDATE private_files SET status='deleted' WHERE id=$1 AND
+       (category IN ('contract','inspection_act') OR (category='inspection_photo' AND deleted_at IS NOT NULL))`,
       [id],
     );
-    if (rowCount) await this.storage.remove(id);
+    if (rowCount) {
+      await this.storage.remove(id);
+      await this.storage.remove(id, true);
+    }
     await this.complete(job, async () => {});
   }
 
@@ -244,13 +248,20 @@ export class DocumentWorker implements OnApplicationBootstrap, OnApplicationShut
       )
     ).rows;
     for (const { id } of rows) {
-      await this.storage.remove(id);
-      await this.storage.remove(id, true);
-      await this.db.pool.query(
-        `UPDATE private_files SET status='deleted',deleted_at=clock_timestamp()
-         WHERE id=$1 AND deleted_at IS NULL AND delete_after<=clock_timestamp()`,
-        [id],
-      );
+      await this.db.transaction(async (c) => {
+        const expired = await c.query(
+          `UPDATE private_files SET status='deleted',deleted_at=clock_timestamp()
+           WHERE id=$1 AND deleted_at IS NULL AND status IN ('ready','failed')
+           AND delete_after<=clock_timestamp() RETURNING id`,
+          [id],
+        );
+        if (!expired.rowCount) return;
+        await c.query(
+          `INSERT INTO outbox_jobs(business_key,kind,payload)
+           VALUES($1,'private-file.retire',$2) ON CONFLICT (business_key) DO NOTHING`,
+          ['retire-photo:' + id, JSON.stringify({ fileId: id })],
+        );
+      });
     }
   }
 

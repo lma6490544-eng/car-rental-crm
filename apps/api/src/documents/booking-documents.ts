@@ -3,7 +3,7 @@ import { fail } from '../platform/security';
 
 export type BookingDocumentContext = {
   customerId: number;
-  status: 'confirmed' | 'cancelled';
+  status: 'confirmed' | 'cancelled' | 'completed' | 'completed_early';
   version: number;
   vehicleId: number | null;
 };
@@ -17,6 +17,15 @@ export async function bookingContext(c: PoolClient, bookingId: number, locked: b
     )
   ).rows[0];
   if (!booking) fail(404, 'NOT_FOUND', 'Бронь не найдена.');
+  if (booking.status === 'completed' || booking.status === 'completed_early') {
+    const {
+      rows: [checkout],
+    } = await c.query<{ issued_vehicle_id: number }>(
+      'SELECT issued_vehicle_id FROM booking_checkouts WHERE booking_id=$1 AND issued_at IS NOT NULL',
+      [bookingId],
+    );
+    return { ...booking, vehicleId: checkout?.issued_vehicle_id ?? null };
+  }
   const assignment = (
     await c.query<{ vehicle_id: number }>(
       'SELECT vehicle_id FROM schedule_blocks WHERE booking_id=$1 AND retired_at IS NULL',
@@ -55,7 +64,12 @@ export type VehicleSnapshot = {
   hasCasco?: boolean | null;
 };
 
-export async function vehicleSnapshot(c: PoolClient, id: number, locked = true) {
+export async function vehicleSnapshot(
+  c: PoolClient,
+  id: number,
+  locked = true,
+  includeArchived = false,
+) {
   const vehicle = (
     await c.query<VehicleSnapshot>(
       `SELECT v.vin, b.name AS brand, m.name AS model, v.plate, v.year,
@@ -63,9 +77,9 @@ export async function vehicleSnapshot(c: PoolClient, id: number, locked = true) 
        v.next_maintenance_due_km AS "nextMaintenanceDueKm",
        CASE v.body_type WHEN 'cargo_minibus' THEN 80 ELSE 40 END AS "tankLiters"
      FROM vehicles v JOIN vehicle_models m ON m.id=v.model_id
-     JOIN vehicle_brands b ON b.id=m.brand_id WHERE v.id=$1 AND v.archived_at IS NULL
+     JOIN vehicle_brands b ON b.id=m.brand_id WHERE v.id=$1 AND ($2 OR v.archived_at IS NULL)
      ${locked ? 'FOR SHARE OF v,m,b' : ''}`,
-      [id],
+      [id, includeArchived],
     )
   ).rows[0];
   if (!vehicle) fail(422, 'VEHICLE_REQUIRED', 'Назначьте действующий автомобиль.');

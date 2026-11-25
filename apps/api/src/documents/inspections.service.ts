@@ -6,7 +6,7 @@ import { AuthRequest, audit, fail } from '../platform/security';
 import { lockBooking, vehicleSnapshot } from './booking-documents';
 import type { VehicleSnapshot } from './booking-documents';
 import type { InspectionKind, InspectionInput } from './document.dto';
-import { listInspectionWork } from './inspection-work';
+import { assertInspectionWorkOwner, findInspectionWork } from './inspection-work';
 
 type InspectionRevision = {
   id: number;
@@ -58,9 +58,7 @@ export class InspectionsService {
         if (kind === 'pickup' && !(await guardCheckoutChange(c, bookingId, true)))
           fail(422, 'CHECKOUT_REQUIRED', 'Начните оформление договора в карточке брони.');
         const operatorId = request.auth!.user.id;
-        const work = (await listInspectionWork(c, bookingId, version)).find(
-          (row) => row.kind === kind,
-        );
+        const work = await findInspectionWork(c, bookingId, version, kind);
         if (work?.operatorId === operatorId) return { id: work.id };
         if (replaceWorkId !== undefined && work?.id !== replaceWorkId)
           fail(409, 'INSPECTION_WORK_CHANGED', 'Статус осмотра изменился. Проверьте карточку.');
@@ -130,13 +128,16 @@ export class InspectionsService {
       async (c) => {
         const booking = await lockBooking(c, bookingId, input.expectedBookingVersion);
         if (kind === 'pickup') await guardCheckoutChange(c, bookingId, true);
-        const work = (await listInspectionWork(c, bookingId, booking.version)).find(
-          (row) => row.kind === kind,
-        );
-        if (work && (work.id !== input.workId || work.operatorId !== request.auth!.user.id))
-          fail(409, 'INSPECTION_IN_PROGRESS', 'Осмотр заполняет ' + work.operatorName + '.');
-        if (!work && input.workId !== undefined)
-          fail(409, 'INSPECTION_WORK_CHANGED', 'Статус осмотра изменился. Проверьте карточку.');
+        const work = await findInspectionWork(c, bookingId, booking.version, kind);
+        assertInspectionWorkOwner(work, input.workId, request.auth!.user.id);
+        if (kind === 'check_in') {
+          const issued = await c.query(
+            'SELECT 1 FROM booking_checkouts WHERE booking_id=$1 AND issued_at IS NOT NULL',
+            [bookingId],
+          );
+          if (issued.rowCount)
+            fail(422, 'RETURN_INSPECTION_REQUIRED', 'Сохраните осмотр в разделе «Акт приемки».');
+        }
         const last =
           (
             await c.query<{ revision: number }>(

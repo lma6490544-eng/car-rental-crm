@@ -12,6 +12,14 @@ export function apiPort(): number {
   return port;
 }
 export const production = process.env.NODE_ENV === 'production';
+export function vapidConfig() {
+  const {
+    PUSH_VAPID_PUBLIC_KEY: publicKey,
+    PUSH_VAPID_PRIVATE_KEY: privateKey,
+    PUSH_VAPID_SUBJECT: subject,
+  } = process.env;
+  return publicKey && privateKey && subject ? { publicKey, privateKey, subject } : undefined;
+}
 export function allowedOrigins(): string[] {
   const configured = process.env.APP_ORIGINS;
   if (production && !configured) throw new Error('APP_ORIGINS is required in production');

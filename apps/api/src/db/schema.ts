@@ -49,6 +49,18 @@ export const sessions = pgTable(
   },
   (t) => [index('sessions_user_idx').on(t.userId), index('sessions_expiry_idx').on(t.expiresAt)],
 );
+export const pushSubscriptions = pgTable('push_subscriptions', {
+  id: recordId(),
+  userId: integer('user_id')
+    .notNull()
+    .references(() => users.id),
+  sessionId: integer('session_id')
+    .notNull()
+    .references(() => sessions.id, { onDelete: 'cascade' }),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+});
 export const auditLogs = pgTable(
   'audit_logs',
   {
@@ -324,7 +336,10 @@ export const bookings = pgTable(
   (t) => [
     index('bookings_period').on(t.startAt, t.endAt),
     check('booking_period', sql.raw('end_at > start_at')),
-    check('booking_status', sql.raw("status IN ('confirmed','cancelled')")),
+    check(
+      'booking_status',
+      sql.raw("status IN ('confirmed','cancelled','completed','completed_early')"),
+    ),
     check('booking_version', sql.raw('version > 0')),
     check(
       'booking_target',
@@ -550,6 +565,7 @@ export const financeAllocations = pgTable(
     fund: text('fund').references(() => financeFunds.id),
     bookingId: integer('booking_id').references(() => bookings.id),
     amountRub: rub(),
+    availableAt: time('available_at'),
   },
   (t) => [
     index('finance_allocation_source').on(t.lotId, t.bucket, t.bookingId),
@@ -561,5 +577,6 @@ export const financeAllocations = pgTable(
       ),
     ),
     check('finance_allocation_nonzero', sql.raw('amount_rub<>0')),
+    check('finance_allocation_availability', sql.raw("available_at IS NULL OR bucket='credit'")),
   ],
 );

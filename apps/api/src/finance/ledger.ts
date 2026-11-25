@@ -25,6 +25,14 @@ export function rentPaymentProgress(summary: { priceRub: string; coverageRub: st
   };
 }
 
+export function rentPaidRatio(summary: { priceRub: string; coverageRub: string }) {
+  const price = BigInt(summary.priceRub);
+  const coverage = BigInt(summary.coverageRub);
+  if (price === 0n || coverage >= price) return 1;
+  if (coverage <= 0n) return 0;
+  return Math.min(Number(coverage) / Number(price), 1 - Number.EPSILON);
+}
+
 export async function recordEvent(
   c: PoolClient,
   r: AuthRequest,
@@ -48,7 +56,7 @@ type SummaryBooking = {
   id: number;
   customer_id: number;
   version: number;
-  status: 'confirmed' | 'cancelled';
+  status: 'confirmed' | 'cancelled' | 'completed' | 'completed_early';
   snapshot: {
     finalTotalRub?: string | null;
     periods?: {
@@ -60,9 +68,18 @@ type SummaryBooking = {
 };
 type SummaryAllocation = { bucket: 'rent' | 'deposit' | 'credit'; amount: string };
 
+const chargeTotal = `coalesce((SELECT sum(f.amount_rub) FROM finance_charges f
+  WHERE f.booking_id=b.id AND (b.status NOT IN ('completed','completed_early') OR EXISTS (
+    SELECT 1 FROM financial_operations o WHERE o.id=f.operation_id
+      AND split_part(o.command_id,':',1) IN ('rental-return','rental-damage')
+  ))),0)::text AS price`;
+
 function summaryAmounts(b: SummaryBooking, rows: readonly SummaryAllocation[]) {
   const amount = (bucket: string) => BigInt(rows.find((x) => x.bucket === bucket)?.amount ?? '0');
-  const price = BigInt(b.status === 'cancelled' ? '0' : (b.snapshot?.finalTotalRub ?? '0')),
+  const completed = b.status === 'completed' || b.status === 'completed_early';
+  const price =
+      BigInt(b.status === 'cancelled' ? '0' : (b.snapshot?.finalTotalRub ?? '0')) +
+      (completed ? BigInt(b.price) : 0n),
     coverage = amount('rent'),
     deposit = amount('deposit');
   return { price, coverage, deposit };
@@ -71,7 +88,7 @@ function summaryAmounts(b: SummaryBooking, rows: readonly SummaryAllocation[]) {
 export async function bookingSummary(c: PoolClient, bookingId: number) {
   const b = (
     await c.query<SummaryBooking>(
-      `SELECT b.id,b.customer_id,b.version,b.status,(SELECT snapshot FROM booking_terms WHERE booking_id=b.id ORDER BY revision DESC LIMIT 1) AS snapshot,coalesce((SELECT sum(amount_rub) FROM finance_charges WHERE booking_id=b.id),0)::text AS price
+      `SELECT b.id,b.customer_id,b.version,b.status,(SELECT snapshot FROM booking_terms WHERE booking_id=b.id ORDER BY revision DESC LIMIT 1) AS snapshot,${chargeTotal}
     FROM bookings b WHERE b.id=$1`,
       [bookingId],
     )
@@ -87,7 +104,7 @@ export async function bookingSummary(c: PoolClient, bookingId: number) {
   const credit = BigInt(
     (
       await c.query<{ amount: string }>(
-        `SELECT coalesce(sum(a.amount_rub),0)::text AS amount FROM finance_allocations a JOIN finance_lots l ON l.id=a.lot_id WHERE l.customer_id=$1 AND a.bucket='credit'`,
+        `SELECT coalesce(sum(a.amount_rub),0)::text AS amount FROM finance_allocations a JOIN finance_lots l ON l.id=a.lot_id WHERE l.customer_id=$1 AND a.bucket='credit' AND (a.available_at IS NULL OR a.available_at<=now())`,
         [b.customer_id],
       )
     ).rows[0].amount,
@@ -102,7 +119,7 @@ export async function bookingSummaries(c: PoolClient, bookingIds: readonly numbe
   const ids = [...new Set(bookingIds)];
   const bookings = (
     await c.query<SummaryBooking>(
-      `SELECT b.id,b.customer_id,b.version,b.status,(SELECT snapshot FROM booking_terms WHERE booking_id=b.id ORDER BY revision DESC LIMIT 1) AS snapshot,coalesce((SELECT sum(amount_rub) FROM finance_charges WHERE booking_id=b.id),0)::text AS price
+      `SELECT b.id,b.customer_id,b.version,b.status,(SELECT snapshot FROM booking_terms WHERE booking_id=b.id ORDER BY revision DESC LIMIT 1) AS snapshot,${chargeTotal}
     FROM bookings b WHERE b.id=ANY($1::int[])`,
       [ids],
     )
@@ -124,7 +141,7 @@ export async function bookingSummaries(c: PoolClient, bookingIds: readonly numbe
   const credits = new Map(
     (
       await c.query<{ customer_id: number; amount: string }>(
-        `SELECT l.customer_id,coalesce(sum(a.amount_rub),0)::text AS amount FROM finance_allocations a JOIN finance_lots l ON l.id=a.lot_id WHERE l.customer_id=ANY($1::int[]) AND a.bucket='credit' GROUP BY l.customer_id`,
+        `SELECT l.customer_id,coalesce(sum(a.amount_rub),0)::text AS amount FROM finance_allocations a JOIN finance_lots l ON l.id=a.lot_id WHERE l.customer_id=ANY($1::int[]) AND a.bucket='credit' AND (a.available_at IS NULL OR a.available_at<=now()) GROUP BY l.customer_id`,
         [customerIds],
       )
     ).rows.map((row) => [row.customer_id, row.amount]),
@@ -154,8 +171,10 @@ function summaryResult(
     paymentsAllowed: false,
     priceRub: price.toString(),
     coverageRub: coverage.toString(),
-    debtRub: '0',
-    overpaymentRub: positive(coverage - BigInt(b.price)).toString(),
+    debtRub: b.status.startsWith('completed') ? positive(price - coverage).toString() : '0',
+    overpaymentRub: positive(
+      coverage - (b.status.startsWith('completed') ? price : BigInt(b.price)),
+    ).toString(),
     depositRub: deposit.toString(),
     availableCreditRub: credit.toString(),
     suggestedDepositRub:
@@ -164,11 +183,99 @@ function summaryResult(
       price === 0n ? '100' : coverage >= price ? '100' : ((coverage * 100n) / price).toString(),
   };
 }
+export async function depositReserveReleaseAt(c: PoolClient, bookingId: number) {
+  const { rows } = await c.query<{ releaseAt: Date | null }>(
+    `SELECT ((returned_at AT TIME ZONE 'Europe/Moscow') + interval '21 days')
+       AT TIME ZONE 'Europe/Moscow' AS "releaseAt"
+     FROM booking_checkouts WHERE booking_id=$1`,
+    [bookingId],
+  );
+  return rows[0]?.releaseAt ?? null;
+}
+
+// The caller holds the schedule lock shared with finance commands.
+export async function rescheduleDepositReserve(
+  c: PoolClient,
+  bookingId: number,
+  customerId: number,
+) {
+  const releaseAt = await depositReserveReleaseAt(c, bookingId);
+  if (!releaseAt) return;
+  const { rows: reserves } = await c.query<{
+    operationId: number;
+    lotId: number;
+    fund: 'operating_cash' | 'deposit_pool' | null;
+    availableAt: Date;
+    released: boolean;
+    amountRub: string;
+  }>(
+    `SELECT o.id AS "operationId",a.lot_id AS "lotId",a.fund,a.available_at AS "availableAt",
+            a.available_at<=now() AS released,sum(a.amount_rub)::text AS "amountRub"
+     FROM financial_operations o JOIN finance_allocations a ON a.operation_id=o.id
+     WHERE o.booking_id=$1 AND a.bucket='credit' AND a.available_at IS NOT NULL
+       AND o.reversal_of IS NULL
+       AND NOT EXISTS (SELECT 1 FROM financial_operations r WHERE r.reversal_of=o.id)
+     GROUP BY o.id,a.lot_id,a.fund,a.available_at
+     HAVING sum(a.amount_rub)>0
+     ORDER BY a.lot_id,a.available_at,o.id`,
+    [bookingId],
+  );
+  if (!reserves.length) return;
+  const available = new Map(
+    (await sources(c, customerId))
+      .filter((source) => source.bucket === 'credit' && source.bookingId === null)
+      .map(({ lotId, fund, availableRub }) => [`${lotId}:${fund}`, BigInt(availableRub)]),
+  );
+  for (const reserve of reserves) {
+    let amount = BigInt(reserve.amountRub);
+    if (reserve.released) {
+      const key = `${reserve.lotId}:${reserve.fund}`;
+      const remaining = available.get(key) ?? 0n;
+      if (amount > remaining) amount = remaining;
+      available.set(key, remaining - amount);
+    }
+    if (amount === 0n || reserve.availableAt.getTime() === releaseAt.getTime()) continue;
+    // Append equal and opposite entries to the settlement so its reversal still covers both dates.
+    await c.query(
+      `INSERT INTO finance_allocations(operation_id,lot_id,bucket,amount_rub,fund,available_at)
+         VALUES($1,$2,'credit',-$3::bigint,$4,$5),($1,$2,'credit',$3::bigint,$4,$6)`,
+      [
+        reserve.operationId,
+        reserve.lotId,
+        bounded(amount).toString(),
+        reserve.fund,
+        reserve.availableAt,
+        releaseAt,
+      ],
+    );
+  }
+}
+
+export async function depositReserve(c: PoolClient, bookingId: number) {
+  const { rows } = await c.query<{ amountRub: string; releaseAt: Date }>(
+    `SELECT sum(a.amount_rub)::text AS "amountRub", a.available_at AS "releaseAt"
+     FROM finance_allocations a JOIN financial_operations o ON o.id=a.operation_id
+     WHERE o.booking_id=$1 AND a.available_at>now()
+     GROUP BY a.available_at HAVING sum(a.amount_rub)>0 ORDER BY a.available_at`,
+    [bookingId],
+  );
+  return rows;
+}
+
 export async function sources(c: PoolClient, customerId: number) {
   return (
-    await c.query(
+    await c.query<{
+      lotId: number;
+      originalOperationId: number;
+      origin: 'rent' | 'deposit';
+      method: 'cash' | 'bank';
+      bucket: SummaryAllocation['bucket'];
+      fund: 'operating_cash' | 'deposit_pool' | null;
+      bookingId: number | null;
+      availableRub: string;
+    }>(
       `SELECT l.id AS "lotId",l.original_operation_id AS "originalOperationId",l.origin,l.method,a.bucket,a.fund,a.booking_id AS "bookingId",sum(a.amount_rub)::text AS "availableRub"
-    FROM finance_lots l JOIN finance_allocations a ON a.lot_id=l.id WHERE l.customer_id=$1 GROUP BY l.id,a.bucket,a.booking_id,a.fund HAVING sum(a.amount_rub)>0 ORDER BY l.id,a.bucket,a.booking_id,a.fund`,
+    FROM finance_lots l JOIN finance_allocations a ON a.lot_id=l.id WHERE l.customer_id=$1 AND (a.available_at IS NULL OR a.available_at<=now()) GROUP BY l.id,a.bucket,a.booking_id,a.fund HAVING sum(a.amount_rub)>0 ORDER BY l.id,a.bucket,a.booking_id,a.fund`,
       [customerId],
     )
   ).rows;

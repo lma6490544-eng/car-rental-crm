@@ -17,9 +17,9 @@ export function usePolling<T>(path: string | undefined, keepPreviousData = false
   const [loading, setLoading] = useState(true);
   const trigger = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
-    let alive = true,
-      busy = false,
-      again = false;
+    let alive = true;
+    let inFlight: Promise<void> | undefined;
+    let queued: Promise<void> | undefined;
     if (!keepPreviousData) setData(undefined);
     setLoading(true);
     setError('');
@@ -28,40 +28,41 @@ export function usePolling<T>(path: string | undefined, keepPreviousData = false
       setLoading(false);
       return;
     }
-    const load = async () => {
-      if (!alive) return;
-      if (busy) {
-        again = true;
-        return;
+    const load = (): Promise<void> => {
+      if (!alive || !navigator.onLine || document.visibilityState === 'hidden')
+        return Promise.resolve();
+      if (inFlight) {
+        queued ??= inFlight.then(() => {
+          queued = undefined;
+          return load();
+        });
+        return queued;
       }
-      if (!navigator.onLine || document.visibilityState === 'hidden') return;
-      busy = true;
-      try {
-        const value = await api<T>(path);
-        if (alive) {
-          setData(value);
-          setError('');
-        }
-      } catch (e) {
-        if (alive) setError(errorMessage(e));
-      } finally {
-        busy = false;
-        if (alive) {
-          setLoading(false);
-          setSettledPath(path);
-        }
-        if (again && alive) {
-          again = false;
-          void load();
-        }
-      }
+      inFlight = api<T>(path)
+        .then((value) => {
+          if (alive) {
+            setData(value);
+            setError('');
+          }
+        })
+        .catch((failure: unknown) => {
+          if (alive) setError(errorMessage(failure));
+        })
+        .finally(() => {
+          inFlight = undefined;
+          if (alive) {
+            setLoading(false);
+            setSettledPath(path);
+          }
+        });
+      return inFlight;
     };
     trigger.current = load;
     const refresh = () => {
       void load();
     };
     const timer = window.setInterval(() => {
-      if (!busy) void load();
+      if (!inFlight) void load();
     }, 5000);
     window.addEventListener('focus', refresh);
     window.addEventListener('online', refresh);

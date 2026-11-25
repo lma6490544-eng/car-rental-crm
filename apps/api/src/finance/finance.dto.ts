@@ -80,6 +80,15 @@ export const financeInput = z.discriminatedUnion('kind', [
       amountRub: money,
     })
     .strict(),
+  z
+    .object({
+      ...base,
+      ...booking,
+      kind: z.literal('deposit_settlement'),
+      expectedDepositRub: amount,
+      reserveRub: money,
+    })
+    .strict(),
   z.object({ ...base, kind: z.literal('reversal'), operationId: id }).strict(),
 ]);
 export type FinanceInput = z.infer<typeof financeInput>;
@@ -90,9 +99,14 @@ export const checkoutReceiptInput = z
     kind: z.enum(['rent_payment', 'deposit_receipt']),
     cashRub: money,
     bankRub: money,
+    returnDebtRub: amount.optional(),
     reason: base.reason,
   })
   .strict()
+  .refine(({ kind, returnDebtRub }) => returnDebtRub === undefined || kind === 'rent_payment', {
+    path: ['returnDebtRub'],
+    message: 'Итоговый расчёт применяется только к оплате аренды.',
+  })
   .refine(({ kind, bankRub }) => kind !== 'deposit_receipt' || bankRub === '0', {
     path: ['bankRub'],
     message: 'Залог принимается наличными.',

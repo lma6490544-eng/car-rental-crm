@@ -19,7 +19,11 @@ import type { Customer } from '../../domain/catalog';
 import { personalFullName, suggestPersonalName } from '../../features/customers/customer-fields';
 import { CheckoutDriver } from '../../features/documents/CheckoutDriver';
 import { contractGeneratingLabel, ContractEditor } from '../../features/documents/ContractEditor';
-import type { BookingDocuments, PhotoKind } from '../../features/documents/document-types';
+import type {
+  BookingDocuments,
+  InspectionWork,
+  PhotoKind,
+} from '../../features/documents/document-types';
 import { actGeneratingLabel, InspectionEditor } from '../../features/documents/InspectionEditor';
 import { CommandFeedback } from '../../features/documents/PrivateFileControls';
 import { useDocumentCommand } from '../../features/documents/useDocumentCommand';
@@ -30,13 +34,15 @@ import BookingForm, { type BookingTermsForm } from '../booking-form/BookingForm'
 import { local } from './dates';
 import { CheckoutPayment, remainingDepositRub } from './CheckoutPayment';
 import { RentPaymentTag } from './RentPaymentStatus';
+import { RentalReturn } from './RentalReturn';
+import type { RentalReturnData } from './RentalReturn';
 import { VehicleAssignmentDialog } from './VehicleAssignmentDialog';
 import type { VehicleMove } from './VehicleAssignmentDialog';
 import '../../features/documents/documents.css';
 
 const issueSections = ['driver', 'contract', 'act', 'payment'] as const;
 const returnSections = [
-  { key: 'return-act', title: 'Акт приемки' },
+  { key: 'return-act', title: 'Акт приёмки' },
   { key: 'return-vehicle', title: 'Сдача автомобиля' },
 ] as const;
 const checkoutSections = [...issueSections, ...returnSections.map(({ key }) => key)] as const;
@@ -71,6 +77,11 @@ const sectionLabel = (title: string, status?: ReactNode, details?: ReactNode) =>
   </>
 );
 
+function inspectionWorkDescription(work: InspectionWork) {
+  const operator = work.operatorName.trim().split(/\s+/).slice(0, 2).join(' ');
+  return 'Осмотр заполняется. Ответственный: ' + operator;
+}
+
 function rentalPeriod(start: string, end: string) {
   const date = new Intl.DateTimeFormat('ru-RU', {
     timeZone: 'Europe/Moscow',
@@ -87,7 +98,7 @@ export type CheckoutExitGuard = { requestClose: () => void; refreshVehicle: () =
 export function ContractCheckout({
   id,
   autoStart,
-  startAtReturn,
+  initialStep,
   ref,
   onClose,
   onLock,
@@ -96,7 +107,7 @@ export function ContractCheckout({
 }: {
   id: number;
   autoStart: boolean;
-  startAtReturn: boolean;
+  initialStep?: 'driver' | 'return-act';
   ref: Ref<CheckoutExitGuard>;
   onClose: () => void;
   onLock: (locked: boolean) => void;
@@ -134,6 +145,11 @@ export function ContractCheckout({
   const [contractEditing, setContractEditing] = useState(false);
   const [contractActions, setContractActions] = useState<HTMLDivElement | null>(null);
   const [actActions, setActActions] = useState<HTMLDivElement | null>(null);
+  const [returnActActions, setReturnActActions] = useState<HTMLDivElement | null>(null);
+  const [returnSettlement, setReturnSettlement] = useState<HTMLDivElement | null>(null);
+  const [returnSettlementActions, setReturnSettlementActions] = useState<HTMLDivElement | null>(
+    null,
+  );
   const [inspectionKind, setInspectionKind] = useState<PhotoKind>('pickup');
   const [inspectionEditing, setInspectionEditing] = useState(false);
   const [driverDirty, setDriverDirty] = useState(false);
@@ -146,6 +162,10 @@ export function ContractCheckout({
   const [paymentDirty, setPaymentDirty] = useState(false);
   const [contractDirty, setContractDirty] = useState(false);
   const [inspectionDirty, setInspectionDirty] = useState(false);
+  const [returnBusy, setReturnBusy] = useState(false);
+  const [returnEditing, setReturnEditing] = useState(false);
+  const [returnDirty, setReturnDirty] = useState(false);
+  const [settlementDirty, setSettlementDirty] = useState(false);
   const [pickingVehicle, setPickingVehicle] = useState(false);
   const fleet = usePolling<BookingOptions>(pickingVehicle ? '/booking-options' : undefined);
   const [termsDraftBase, setTermsDraftBase] = useState<BookingDetail>();
@@ -153,16 +173,25 @@ export function ContractCheckout({
   const [termsReady, setTermsReady] = useState(false);
   const [termsReset, setTermsReset] = useState(0);
   const [savedTermsVersion, setSavedTermsVersion] = useState<number>();
+  const issued = !!data?.checkout?.issuedAt;
+  const rentalReturn = usePolling<RentalReturnData>(issued ? path + '/return' : undefined);
   async function refresh() {
     await Promise.all([
       docs.reload(),
       booking.reload(),
       finance.reload(),
+      ...(issued ? [rentalReturn.reload()] : []),
       ...(customerId ? [customer.reload()] : []),
     ]);
     onChanged();
   }
-  const command = useDocumentCommand(refresh, onLock);
+  const command = useDocumentCommand(refresh);
+  const locked = command.locked || returnBusy;
+  useEffect(() => {
+    if (!locked) return;
+    onLock(true);
+    return () => onLock(false);
+  }, [locked, onLock]);
   const checkout = data?.checkout;
   const canStart =
     !!data && !checkout && data.booking.status === 'confirmed' && data.booking.vehicleId !== null;
@@ -187,8 +216,27 @@ export function ContractCheckout({
     (!b || !data || b.version < savedTermsVersion || b.version !== data.booking.version);
   const termsSource = termsDraftBase ?? b;
   const termsDirty = !!termsDraftBase;
-  const disabled = command.locked || termsDirty || waitingForTerms;
-  const issued = !!checkout?.issuedAt;
+  const disabled = locked || termsDirty || waitingForTerms;
+  const rentalCompleted =
+    data?.booking.status === 'completed' || data?.booking.status === 'completed_early';
+  const returnInspectionSaved = !!rentalReturn.data?.history.length;
+  const returnWork = rentalReturn.data?.inspectionWork;
+  const returnWorkLabel = returnWork ? inspectionWorkDescription(returnWork) : undefined;
+  let returnActHint: string | undefined;
+  if (returnWork)
+    returnActHint = returnWork.operatorId === user?.id ? 'Завершите осмотр' : 'Дождитесь осмотра';
+  else if (returnEditing) returnActHint = 'Исправление приёмки';
+  else if (returnInspectionSaved) returnActHint = 'Осмотр сохранён';
+  else if (rentalReturn.loading) returnActHint = 'Загружаем приёмку…';
+  else if (rentalReturn.error) returnActHint = 'Обновите данные приёмки';
+  else returnActHint = 'Заполните осмотр';
+  let returnVehicleHint: string | undefined;
+  if (!returnInspectionSaved) returnVehicleHint = 'Нужен осмотр';
+  else if (returnWork) returnVehicleHint = 'Идёт осмотр';
+  else if (!rentalCompleted) returnVehicleHint = 'Подтвердите приёмку';
+  let returnActStepStatus: NonNullable<StepsProps['items']>[number]['status'] = 'wait';
+  if (returnWork || returnEditing) returnActStepStatus = 'process';
+  else if (returnInspectionSaved) returnActStepStatus = 'finish';
   const savedCustomer = customer.data;
   const customerSectionTitle = savedCustomer?.type === 'company' ? 'Организация' : 'Водитель';
   let customerName = savedCustomer?.displayName || b?.customer_name;
@@ -223,10 +271,11 @@ export function ContractCheckout({
         latestContract.customerVersion === data?.customerVersion));
   const inspection = data?.inspections.find((version) => version.kind === inspectionKind);
   const inspectionSaved = !!inspection && inspection.vehicleId === data?.booking.vehicleId;
-  const inspectionWork = data?.inspectionWork.find((work) => work.kind === inspectionKind);
+  const inspectionWork = data?.inspectionWork.find(
+    (work) => work.kind === inspectionKind && (!issued || work.kind === 'pickup'),
+  );
   const inspectionWorkLabel = inspectionWork
-    ? 'Осмотр заполняется. Ответственный: ' +
-      inspectionWork.operatorName.trim().split(/\s+/).slice(0, 2).join(' ')
+    ? inspectionWorkDescription(inspectionWork)
     : undefined;
   const pickupWork = data?.inspectionWork.some((work) => work.kind === 'pickup');
   const latestAct = data?.acts.find(
@@ -307,11 +356,13 @@ export function ContractCheckout({
     payment: paymentComplete,
   };
   const visibleReturnSections = issued ? returnSections : [];
-  const drafts: { section: IssueSection; title: string; dirty: boolean }[] = [
+  const drafts: { section: CheckoutStep; title: string; dirty: boolean }[] = [
     { section: 'driver', title: customerSectionTitle, dirty: driverDirty },
     { section: 'contract', title: 'Договор', dirty: contractDirty || termsDirty },
     { section: 'act', title: 'Акт', dirty: inspectionDirty },
     { section: 'payment', title: 'Оплата', dirty: paymentDirty },
+    { section: 'return-act', title: 'Акт приёмки', dirty: returnDirty },
+    { section: 'return-vehicle', title: 'Сдача автомобиля', dirty: settlementDirty },
   ];
   const unsaved = drafts.filter((draft) => draft.dirty);
   const issueBlockers: IssueBlocker[] = [];
@@ -384,8 +435,8 @@ export function ContractCheckout({
   const canIssue = !command.locked && issueBlockers.length === 0;
   const trackingProgress = !!checkout && !!savedCustomer && !issued;
   const [navigation, setNavigation] = useState<CheckoutNavigation>(() => ({
-    step: startAtReturn ? 'return-act' : undefined,
-    expanded: startAtReturn,
+    step: initialStep,
+    expanded: initialStep !== undefined,
     completed,
     trackingProgress,
     issued,
@@ -399,7 +450,7 @@ export function ContractCheckout({
       : undefined;
   let { step, expanded, issueFocus } = navigation;
   if (issued && !navigation.issued) {
-    expanded = startAtReturn;
+    expanded = initialStep !== undefined;
     issueFocus = undefined;
   } else if (justCompleted) {
     const remaining = issueSections.filter((section) => !completed[section]);
@@ -494,7 +545,14 @@ export function ContractCheckout({
     }));
   }
   function reveal(section: CheckoutStep) {
+    if (section === 'return-vehicle' && !returnInspectionSaved) return;
     revealDestination({ section });
+  }
+  function revealReturnAct() {
+    reveal('return-act');
+  }
+  function revealReturnVehicle() {
+    reveal('return-vehicle');
   }
   function revealStep(index: number) {
     const section = visibleSections[index];
@@ -502,6 +560,7 @@ export function ContractCheckout({
   }
   function handleSectionChange(keys: string[]) {
     const section = visibleSections.find((candidate) => candidate === keys[0]);
+    if (section === 'return-vehicle' && !returnInspectionSaved) return;
     setNavigation((previous) => ({
       ...previous,
       step: section ?? previous.step,
@@ -529,7 +588,7 @@ export function ContractCheckout({
   issueChecklist.push(...issueBlockers);
   const issueBlockersId = useId();
   function requestExit(exit: () => void) {
-    if (command.locked) return;
+    if (locked) return;
     if (unsaved.length) {
       exitAfterDiscard.current = exit;
       setConfirming('close');
@@ -537,16 +596,13 @@ export function ContractCheckout({
       exit();
     }
   }
-  function handleCardLink(event: MouseEvent<HTMLAnchorElement>, to: string) {
+  function handleCardLink(event: MouseEvent<HTMLAnchorElement>) {
     if (event.button !== 0 || event.metaKey || event.altKey || event.ctrlKey || event.shiftKey)
       return;
-    if (!command.locked && !unsaved.length) return;
+    if (!locked && !unsaved.length) return;
     event.preventDefault();
-    requestExit(() => void navigate(to));
-  }
-  function handleVehicleClick(event: MouseEvent<HTMLAnchorElement>) {
-    const vehicleId = data?.booking.vehicleId;
-    if (vehicleId) handleCardLink(event, '/fleet/' + vehicleId);
+    const { pathname, search, hash } = event.currentTarget;
+    requestExit(() => void navigate(pathname + search + hash));
   }
   useImperativeHandle(ref, () => ({
     refreshVehicle: () => void refresh(),
@@ -777,7 +833,24 @@ export function ContractCheckout({
                   description: paymentStepHint ?? paymentHint,
                   status: paymentComplete ? 'finish' : checkout?.hasMoney ? 'process' : 'wait',
                 },
-                ...visibleReturnSections.map(({ title }) => ({ title, status: 'wait' as const })),
+                ...visibleReturnSections.map<NonNullable<StepsProps['items']>[number]>(
+                  ({ key, title }) => ({
+                    title,
+                    description: key === 'return-act' ? returnActHint : returnVehicleHint,
+                    icon: key === 'return-act' && returnWork && (
+                      <span role="status" aria-label={returnWorkLabel}>
+                        <LoadingOutlined aria-hidden="true" />
+                      </span>
+                    ),
+                    status:
+                      key === 'return-act'
+                        ? returnActStepStatus
+                        : rentalCompleted
+                          ? 'finish'
+                          : 'wait',
+                    disabled: key === 'return-vehicle' && !returnInspectionSaved,
+                  }),
+                ),
               ] satisfies NonNullable<StepsProps['items']>
             ).map((item: NonNullable<StepsProps['items']>[number], index) => ({
               ...item,
@@ -785,6 +858,7 @@ export function ContractCheckout({
                 <span className="checkout-step-hint">{item.description}</span>
               ),
               'aria-current': index === currentStep ? 'step' : undefined,
+              'aria-disabled': item.disabled || undefined,
               onClick: () => {
                 if (index === currentStep) revealStep(index);
               },
@@ -821,10 +895,7 @@ export function ContractCheckout({
                     driverHint && <Badge status="default" text={driverHint} />,
                   ),
                   extra: customerName && customerId && (
-                    <Link
-                      to={'/clients/' + customerId}
-                      onClick={(event) => handleCardLink(event, '/clients/' + customerId)}
-                    >
+                    <Link to={'/clients/' + customerId} onClick={handleCardLink}>
                       {customerName}
                     </Link>
                   ),
@@ -932,7 +1003,7 @@ export function ContractCheckout({
                       data={data}
                       command={command}
                       actionsContainer={actActions}
-                      onVehicleClick={handleVehicleClick}
+                      onVehicleClick={handleCardLink}
                       replaceVehicleAction={
                         canReplaceVehicle && (
                           <Tooltip
@@ -994,20 +1065,100 @@ export function ContractCheckout({
                       )
                     ),
                   ),
-                  children: summary && (
-                    <CheckoutPayment
-                      summary={summary}
-                      invoicePayment={invoicePayment}
-                      requiredDeposit={checkout?.requiredDepositRub ?? null}
-                      command={command}
-                      disabled={disabled || !checkout}
-                      onDirty={setPaymentDirty}
-                    />
+                  children: rentalCompleted ? (
+                    <Link
+                      to={'/payments?customerId=' + customerId + '&bookingId=' + id}
+                      onClick={handleCardLink}
+                    >
+                      Платежи
+                    </Link>
+                  ) : (
+                    summary && (
+                      <CheckoutPayment
+                        summary={summary}
+                        invoicePayment={invoicePayment}
+                        requiredDeposit={checkout?.requiredDepositRub ?? null}
+                        command={command}
+                        disabled={disabled || !checkout}
+                        onDirty={setPaymentDirty}
+                      />
+                    )
                   ),
                 },
                 ...visibleReturnSections.map(({ key, title }) => ({
                   key,
-                  label: sectionLabel(title),
+                  label: sectionLabel(
+                    title,
+                    key === 'return-act' ? (
+                      returnWorkLabel ? (
+                        <span role="status" aria-label={returnWorkLabel} title="Осмотр заполняется">
+                          <Badge status="processing" text={returnWorkLabel} />
+                        </span>
+                      ) : (
+                        <Badge
+                          status={
+                            returnEditing
+                              ? 'processing'
+                              : returnInspectionSaved
+                                ? 'success'
+                                : 'default'
+                          }
+                          text={returnActHint}
+                        />
+                      )
+                    ) : returnInspectionSaved && !returnWork ? (
+                      <Badge
+                        status={rentalCompleted ? 'success' : 'default'}
+                        text={rentalCompleted ? 'Приёмка подтверждена' : 'Ждёт подтверждения'}
+                      />
+                    ) : undefined,
+                    key === 'return-act' && vehicle && (
+                      <>
+                        <span className="checkout-heading-badge">{vehicle.plate}</span>
+                        <span className="checkout-heading-detail">
+                          {vehicle.brand} {vehicle.model}
+                        </span>
+                      </>
+                    ),
+                  ),
+                  collapsible:
+                    key === 'return-vehicle' && !returnInspectionSaved
+                      ? ('disabled' as const)
+                      : undefined,
+                  extra:
+                    key === 'return-act' ? (
+                      <div ref={setReturnActActions} />
+                    ) : (
+                      <div ref={setReturnSettlementActions} />
+                    ),
+                  children:
+                    key === 'return-act' ? (
+                      <>
+                        <PollNotice {...rentalReturn} />
+                        {rentalReturn.data && (
+                          <RentalReturn
+                            key={id}
+                            id={id}
+                            data={rentalReturn.data}
+                            reload={rentalReturn.reload}
+                            command={command}
+                            actionsContainer={returnActActions}
+                            settlementContainer={returnSettlement}
+                            settlementActionsContainer={returnSettlementActions}
+                            onReveal={revealReturnAct}
+                            onRevealSettlement={revealReturnVehicle}
+                            onChanged={refresh}
+                            onBusy={setReturnBusy}
+                            onEditing={setReturnEditing}
+                            onDirty={setReturnDirty}
+                            onSettlementDirty={setSettlementDirty}
+                            onPaymentClick={handleCardLink}
+                          />
+                        )}
+                      </>
+                    ) : (
+                      <div ref={setReturnSettlement} />
+                    ),
                 })),
               ].map((item) => ({
                 ...item,

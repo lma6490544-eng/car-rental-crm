@@ -100,12 +100,25 @@ export async function guardCheckoutChange(c: PoolClient, bookingId: number, allo
   return state;
 }
 
+type CalendarCheckout = { checkoutPhase: 'started' | 'issued'; returnInProgress?: true };
 export async function checkoutPhases(c: PoolClient, ids: number[]) {
-  if (!ids.length || !(await checkoutAvailable(c))) return new Map<number, 'started' | 'issued'>();
-  const { rows } = await c.query<{ booking_id: number; phase: 'started' | 'issued' }>(
-    `SELECT booking_id,CASE WHEN issued_at IS NULL THEN 'started' ELSE 'issued' END AS phase
+  const phases = new Map<number, CalendarCheckout>();
+  if (!ids.length || !(await checkoutAvailable(c))) return phases;
+  const { rows } = await c.query<{
+    booking_id: number;
+    phase: 'started' | 'issued';
+    receiving: boolean;
+  }>(
+    `SELECT booking_id,CASE WHEN issued_at IS NULL THEN 'started' ELSE 'issued' END AS phase,
+       to_jsonb(x)->>'return_started_at' IS NOT NULL AND to_jsonb(x)->>'returned_at' IS NULL AS receiving
      FROM booking_checkouts x WHERE booking_id=ANY($1::int[]) AND to_jsonb(x)->>'stopped_at' IS NULL`,
     [ids],
   );
-  return new Map(rows.map(({ booking_id, phase }) => [booking_id, phase]));
+  for (const row of rows) {
+    phases.set(row.booking_id, {
+      checkoutPhase: row.phase,
+      ...(row.receiving ? { returnInProgress: true } : {}),
+    });
+  }
+  return phases;
 }

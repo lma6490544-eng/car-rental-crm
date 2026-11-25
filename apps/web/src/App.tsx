@@ -47,6 +47,8 @@ function Shell() {
   const { message } = AntApp.useApp();
   const [leaving, setLeaving] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const rentalRoute = location.pathname.startsWith('/rentals/');
+  const calendarLayout = location.pathname === '/calendar' || rentalRoute;
   if (!auth.user)
     return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   const logout = async () => {
@@ -81,7 +83,7 @@ function Shell() {
         <Menu
           theme={mode}
           mode="inline"
-          selectedKeys={['/' + location.pathname.split('/')[1]]}
+          selectedKeys={[rentalRoute ? '/calendar' : '/' + location.pathname.split('/')[1]]}
           items={[
             { key: '/', icon: <HomeOutlined />, label: <Link to="/">Главная</Link> },
             {
@@ -143,11 +145,7 @@ function Shell() {
         </div>
       </Layout.Sider>
       <Layout>
-        <Layout.Content
-          className={
-            'app-content' + (location.pathname === '/calendar' ? ' app-content-calendar' : '')
-          }
-        >
+        <Layout.Content className={'app-content' + (calendarLayout ? ' app-content-calendar' : '')}>
           {auth.error && (
             <Alert
               className="notice"
@@ -227,6 +225,7 @@ export default function App() {
             <Route path="fleet/:id" element={<VehicleDetail />} />
             <Route path="pricing" element={<Pricing />} />
             <Route path="calendar" element={<Calendar />} />
+            <Route path="rentals/:rentalId" element={<Calendar />} />
             <Route path="payments" element={<Payments />} />
             <Route path="settings" element={<Settings />} />
             <Route

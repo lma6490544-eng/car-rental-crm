@@ -7,6 +7,7 @@ import type {
   RentPaymentProgress,
 } from '../../contracts';
 import { useEffect, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { Badge, Dropdown, Tag, Tooltip } from 'antd';
 import {
   CalendarOutlined,
@@ -38,19 +39,26 @@ const bookingStartLabel = (value: string | number) => {
   );
   return `${p.day}.${p.month} ${p.hour}:${p.minute}`;
 };
+function progressLabel(phase: ScheduleEvent['checkoutPhase'], returnInProgress?: true) {
+  if (returnInProgress) return 'Приёмка';
+  if (phase === 'started') return 'Оформление';
+}
 function BookingBlock({
   name,
   start,
   phase,
+  returnInProgress,
   accountingEmailUnsent,
   invoicePayment,
 }: {
   name: string;
   start: string;
   phase?: ScheduleEvent['checkoutPhase'];
+  returnInProgress?: true;
   accountingEmailUnsent?: true;
   invoicePayment?: RentPaymentProgress;
 }) {
+  const label = progressLabel(phase, returnInProgress);
   return (
     <span className="calendar-booking-content">
       {invoicePayment && (
@@ -69,7 +77,7 @@ function BookingBlock({
           aria-label="Данные для счёта не отправлены"
         />
       )}
-      {phase === 'started' && <Badge status="processing" role="img" aria-label="Оформление" />}
+      {label && <Badge status="processing" role="img" aria-label={label} />}
       <Tag className="calendar-booking-start">{bookingStartLabel(start)}</Tag>
       <span className="calendar-booking-name">{name}</span>
     </span>
@@ -103,6 +111,7 @@ function BookingTooltip({
     customer_name?: string;
     customer_phone?: string;
     checkoutPhase?: ScheduleEvent['checkoutPhase'];
+    returnInProgress?: true;
     start_at: string;
     end_at: string;
     booking_id?: number | null;
@@ -112,11 +121,12 @@ function BookingTooltip({
     invoicePayment?: RentPaymentProgress;
   };
 }) {
+  const label = progressLabel(b.checkoutPhase, b.returnInProgress);
   return (
     <div className="booking-tooltip">
       <div className="booking-tooltip-heading">
         <strong>{b.customer_name ?? 'Бронь №' + (b.booking_id ?? b.id)}</strong>
-        {b.checkoutPhase === 'started' && <Tag color="processing">Оформление</Tag>}
+        {label && <Tag color="processing">{label}</Tag>}
       </div>
       <div className="booking-tooltip-row">
         <CalendarOutlined />
@@ -294,9 +304,28 @@ function VehicleRow({
           </div>
         </Dropdown>
         {layout.events.map((s) => {
-          const left = Math.max(0, ((Date.parse(s.start_at) - from) / DAY) * dayWidth),
-            right = Math.min(days * dayWidth, ((Date.parse(s.end_at) - from) / DAY) * dayWidth);
+          const eventLeft = ((Date.parse(s.start_at) - from) / DAY) * dayWidth;
+          const eventRight = ((Date.parse(s.end_at) - from) / DAY) * dayWidth;
+          const left = Math.max(0, eventLeft);
+          const right = Math.min(days * dayWidth, eventRight);
+          const width = Math.max(4, right - left);
+          const position: CSSProperties & { '--event-paid-width'?: string } = {
+            left,
+            width,
+            top: 5 + s.lane * 38,
+          };
           const activeRental = s.checkoutPhase === 'issued';
+          let paymentClass = '';
+          if (activeRental || s.checkoutPhase === 'completed') {
+            const paidRatio = s.paidRatio ?? (Number(s.financialSummary?.paidPercent) || 0) / 100;
+            if (paidRatio >= 1) paymentClass = ' booking-paid';
+            else if (paidRatio > 0) {
+              paymentClass = ' booking-partially-paid';
+              const paidEnd = eventLeft + (eventRight - eventLeft) * paidRatio;
+              const paidWidth = Math.max(0, Math.min(width, paidEnd - left));
+              position['--event-paid-width'] = `${paidWidth}px`;
+            } else paymentClass = ' booking-unpaid';
+          }
           const open = () => {
             if (!s.booking_id) openVehicle();
             else onSelect({ kind: s.checkoutPhase ? 'contract' : 'booking', id: s.booking_id });
@@ -344,16 +373,12 @@ function VehicleRow({
                 className={
                   'calendar-event ' +
                   (s.kind === 'technical' ? 'technical' : 'booking') +
-                  (activeRental
-                    ? Number(s.financialSummary?.paidPercent) === 100
-                      ? ' booking-paid'
-                      : ' booking-unpaid'
-                    : '') +
+                  paymentClass +
                   (s.booking_id && (s.kind === 'assignment' || s.kind === 'displaced')
                     ? ' calendar-draggable'
                     : '')
                 }
-                style={{ left, width: Math.max(4, right - left), top: 5 + s.lane * 38 }}
+                style={position}
                 onPointerDown={(e) => {
                   if (
                     e.button === 0 &&
@@ -378,6 +403,7 @@ function VehicleRow({
                       <BookingBlock
                         name={s.customer_name ?? 'Бронь №' + s.booking_id}
                         phase={s.checkoutPhase}
+                        returnInProgress={s.returnInProgress}
                         accountingEmailUnsent={s.accountingEmailUnsent}
                         invoicePayment={s.invoicePayment}
                         start={s.start_at}
@@ -707,6 +733,7 @@ export default function CalendarGrid(props: Props) {
                       name={b.customer_name + ' · Не назначен'}
                       start={b.start_at}
                       phase={b.checkoutPhase}
+                      returnInProgress={b.returnInProgress}
                       accountingEmailUnsent={b.accountingEmailUnsent}
                       invoicePayment={b.invoicePayment}
                     />

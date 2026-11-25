@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, ApiError, errorMessage } from '../../api';
+import { api, ApiError, createIdempotencyKey, errorMessage } from '../../api';
 import type { AdditionalDriver } from './document-types';
 
 type CommandName =
@@ -143,7 +143,7 @@ export function useDocumentCommand(
   ) {
     if (!pending)
       void send({
-        operations: [{ name, path, key: crypto.randomUUID(), data, done, onRejected }],
+        operations: [{ name, path, key: createIdempotencyKey(), data, done, onRejected }],
         errors: [],
       });
   }
@@ -158,7 +158,7 @@ export function useDocumentCommand(
     const contract: Attempt = {
       name: 'contracts.create',
       path: path + '/contracts',
-      key: crypto.randomUUID(),
+      key: createIdempotencyKey(),
       data: { body },
       done,
     };
@@ -166,7 +166,7 @@ export function useDocumentCommand(
       ? {
           name: 'bookings.terms',
           path: path + '/terms',
-          key: crypto.randomUUID(),
+          key: createIdempotencyKey(),
           data: { method: 'PATCH', body: terms.body },
           onAvailabilityChanged: terms.onAvailabilityChanged,
           next(result) {
@@ -189,7 +189,7 @@ export function useDocumentCommand(
     const operations = files.map((file): Attempt => ({
       name: 'files.upload',
       path,
-      key: crypto.randomUUID(),
+      key: createIdempotencyKey(),
       data: { file },
       done,
     }));

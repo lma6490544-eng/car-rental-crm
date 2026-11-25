@@ -1,5 +1,6 @@
 import { Switch, Typography } from 'antd';
 import { useTheme } from '../theme';
+import PushSettings from './PushSettings';
 
 export default function Settings() {
   const { mode, setMode } = useTheme();
@@ -19,6 +20,7 @@ export default function Settings() {
           onChange={(checked) => setMode(checked ? 'dark' : 'light')}
         />
       </div>
+      <PushSettings />
     </section>
   );
 }

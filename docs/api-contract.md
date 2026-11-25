@@ -139,7 +139,7 @@ Quote возвращает `dailyMileagePackageKm`, `contractDays`, `billableDay
 
 Суммы и краткое финансовое состояние можно получать по отдельному summary endpoint при открытии tooltip/Popover; паспортных данных в календарном payload нет. Период одного запроса ограничивается сервером; бесконечная прокрутка реализуется окнами запросов, а не ответом за всё время.
 
-`paidRatio` — результат Finance, а не вычисление frontend по сырым платежам. Перед выдачей тип события booking всегда жёлтый. Для технических событий отдельный тип. Фактическая просрочка и следующий план могут визуально пересекаться как конфликт; это не разрешение двойной выдачи.
+`paidRatio` — доля покрытия от 0 до 1 для выданных и завершённых аренд. Finance рассчитывает её по подтверждённым платежам и зачтённому клиентскому остатку без округления до целого процента. Перед выдачей бронь всегда жёлтая. Для технических событий отдельный тип. Фактическая просрочка и следующий план могут визуально пересекаться как конфликт; это не разрешение двойной выдачи.
 
 ## Документы и асинхронные операции
 
@@ -150,7 +150,7 @@ Quote возвращает `dailyMileagePackageKm`, `contractDays`, `billableDay
 | GET `/bookings/:id/documents` | Согласованный снимок осмотров, файлов, версий договора и готовности исходных реквизитов. `inspectionWork` содержит ID, вид осмотра и имя ответственного оператора по актуальной версии брони. |
 | POST `/bookings/:id/inspections/:kind/start` | Начать заполнение по `expectedBookingVersion` или продолжить свою работу. При явной передаче новый оператор передаёт `replaceWorkId` текущей работы. |
 | POST `/bookings/:id/inspections/:kind/cancel` | Владелец освобождает осмотр по `workId` и `expectedBookingVersion`. Сохранённые редакции остаются доступны. |
-| POST `/bookings/:id/inspections/:kind` | Записать неизменяемую редакцию осмотра с `expectedBookingVersion`, `expectedRevision`, показаниями, повреждениями и ссылками на фото. Вид — `pickup` или `check_in`. Если заполнение начато, нужно передать `workId` от имени ответственного. Сохранение закрывает работу в той же транзакции. |
+| POST `/bookings/:id/inspections/:kind` | Записать неизменяемую редакцию осмотра с `expectedBookingVersion`, `expectedRevision`, показаниями, повреждениями и ссылками на фото. Вид — `pickup` или `check_in`. Если заполнение начато, нужно передать `workId` от имени ответственного. Сохранение закрывает работу в той же транзакции. После выдачи сохранение через `/inspections/check_in` возвращает `422 RETURN_INSPECTION_REQUIRED`. |
 | POST `/bookings/:id/inspection-photos/:kind/:version` | Загрузить бинарный JPEG/PNG для текущего назначения с версией брони `:version`. Ответ содержит ID файла, публикация через outbox. |
 | GET `/bookings/:id/inspection-photos/:file` | Скачать разрешённое фото. Истёкший файл возвращает 410. |
 | GET `/customer-document-settings` | Возвращает `{ uploadsEnabled: boolean }` для интерфейса загрузки. |
@@ -158,8 +158,11 @@ Quote возвращает `dailyMileagePackageKm`, `contractDays`, `billableDay
 | POST `/customers/:id/private-documents` | Загрузить JPEG/PNG/PDF. По умолчанию отключено. Без `CRM_CUSTOMER_DOCUMENT_UPLOADS_ENABLED=true` сервер отвечает 403 с кодом `CUSTOMER_DOCUMENT_UPLOAD_DISABLED`. |
 | GET `/customers/:id/private-documents/:file` | Скачать скан конкретного клиента |
 | POST `/bookings/:id/contracts` | Подготовить новую версию договора со снимком реквизитов и условий. Ввод включает ожидаемые версии брони, клиента, текущего договора, сумму залога и при наличии дополнительного водителя. КАСКО берётся из карточки автомобиля. В договоре ФЛ имя берётся из реквизитов клиента. Фамилия и имя обязательны, отчество подставляется при наличии. |
-| POST `/financial-operations/checkout-receipt` | Провести поступление при оформлении. Ввод: `kind` (`rent_payment` или `deposit_receipt`), `bookingId`, `customerId`, `expectedVersion` брони, `cashRub`, `bankRub` и `reason`. Суммы передаются строками в целых рублях. Наличные указываются за вычетом сдачи, для залога `bankRub` равен `"0"`. Ненулевые части проводятся одной транзакцией как отдельные записи журнала. Ответ содержит `id` первой записи. Повтор с тем же ключом команды `finance.post` возвращает тот же результат. |
+| POST `/financial-operations/checkout-receipt` | Провести поступление при оформлении. Ввод: `kind` (`rent_payment` или `deposit_receipt`), `bookingId`, `customerId`, `expectedVersion` брони, `cashRub`, `bankRub` и `reason`. Суммы передаются строками в целых рублях. Наличные указываются за вычетом сдачи, для залога `bankRub` равен `"0"`. Ненулевые части проводятся одной транзакцией как отдельные записи журнала. Ответ содержит `id` первой записи. Повтор с тем же ключом команды `finance.post` возвращает тот же результат. Для доплаты после приёмки передать `returnDebtRub` с актуальным остатком долга. Сервер проверяет завершение приёмки, версию и остаток под блокировкой. Доплата может быть частичной. |
+| POST `/financial-operations` | Для расчёта по залогу после подтверждения приёмки передать `kind=deposit_settlement`, `bookingId`, `customerId`, `expectedVersion`, `expectedDepositRub`, `reserveRub` и `reason`. Остаток за вычетом резерва возвращается наличными из фонда залогов. Возврат и резерв проводятся одной командой `finance.post`. При кассовой недостаче действуют `warningToken` и `shortfallAcknowledged`. |
 | POST `/financial-operations/invoice-receipt` | Подтвердить банковское поступление по действующей брони организации, в том числе до начала оформления договора. Поля: `bookingId`, `customerId`, `expectedVersion`, `expectedCoverageRub`, `amountRub`, `paidOn` (дата в формате ГГГГ-ММ-ДД), необязательный `reference`. Суммы передаются строками в целых рублях. Сумма может быть меньше остатка и не должна превышать его. Сервер сверяет версию и ранее проведённую сумму под блокировкой. Ответ содержит `id` операции. Используется ключ команды `finance.post`. |
+
+`GET /bookings/:id/return` возвращает `reserves` с суммами и датами окончания действующих резервов. С 21-го календарного дня после фактического возврата сумма доступна как клиентский остаток с исходным фондом. Исправление даты возврата пересчитывает срок неиспользованной части резерва. Уже проведённые выплаты сохраняются.
 
 `GET /bookings/:id/finance` и ячейки брони организации в `GET /calendar` содержат `invoicePayment` со статусом, суммой аренды, поступлениями и остатком. Статусы: `unpaid`, `partial`, `paid`, `not_required`. Подтверждение оплаты не зависит от отправки письма бухгалтерии.
 | POST `/bookings/:id/contracts/:version/retry` | Повторить неудачную генерацию этой версии |
@@ -216,7 +219,18 @@ OpenAPI является транспортным контрактом. Из н�
 | POST /bookings/:id/signing-confirmations | contractVersionId, inspectionPdfVersionId, confirmed=true; автор и время от сервера |
 | POST /bookings/:id/price-adjustments | non_billable_day принимает rentalDayIndex, reason; custom_price/mileage_limit_change — целое значение и причину |
 | POST /bookings/:id/pickup | актуальные ID осмотра/документов/подписания, expectedVersion, warningAcknowledgements |
-| POST /bookings/:id/check-in | quoteId, expectedVersion, inspectionRevisionId, подтверждённые корректировки; досрочный расчёт через общий сценарий |
+| GET /bookings/:id/return | Фактическая выдача, редакции возврата, актуальный баланс, фото и `inspectionWork` с ответственным за текущий осмотр |
+| POST /bookings/:id/return/start | Нажатие «Завершить аренду». Требуется Idempotency-Key. При первом вызове для выданной активной аренды фиксируются сотрудник, время и событие rentalReturn.started. Повтор возвращает тот же id. |
+| GET /calendar | От начала приёмки до подтверждения возврата ячейка аренды содержит `returnInProgress: true` при `checkoutPhase: "issued"`. |
+| POST /bookings/:id/return/inspection | Редакция осмотра, `expectedRevision`, время или `null` для текущего времени, показания, замечания, `photoIds` и подготовка. Сервер проверяет переданные идентификаторы и включает в редакцию готовые фото приёмки этой аренды с учётом исключений. В необязательном `excludedPhotoIds` передаются готовые фото, которые нужно убрать из акта и его галереи при сохранении. Ранее исключённые фото остаются исключёнными в следующих редакциях. Срок хранения файлов действует как обычно. Сохранение ожидает окончания загрузки, кроме случая с отметкой `photoException`. Если заполнение начато через `/inspections/check_in/start`, ответственный передаёт `workId`. Сохранение закрывает работу в той же транзакции. |
+| POST /bookings/:id/return/review | Предварительный итог по сохранённому осмотру, мойке и ручным строкам. Возвращает актуальную редакцию и токен подтверждения. Во время заполнения осмотра расчёт и подтверждение возвращают `409 INSPECTION_IN_PROGRESS`. |
+| POST /bookings/:id/return/confirm | Тот же ввод и токен. Возвращает номер сохранённой редакции в поле `revision`. При расхождении осмотра, условий или платежей возвращает `409 RETURN_REVIEW_CHANGED` |
+| POST /bookings/:id/return/correction-preview | Исправленные показания, время, причина, редакция и подтверждаемый список снятых строк. Возвращает текущую редакцию, финансовую разницу и токен |
+| POST /bookings/:id/return/correct | Сохраняет исправление по подтверждённому токену и возвращает номер новой редакции |
+| POST /bookings/:id/return/damage | Отдельное начисление ущерба по завершённой аренде. Требуются `expectedRevision`, сумма и причина |
+| GET /customers/:id/rental-history, GET /vehicles/:id/rental-history | Фактические выдачи и возвраты для ссылок на карточку аренды |
+
+Результат остановки оформления и операций приёмки доступен их автору через `GET /operations/by-key`. Поддерживаются команды `checkout.stop`, `rentalReturn.save`, `rentalReturn.confirm`, `rentalReturn.correct` и `rentalReturn.damage`.
 
 В quote: periods[], dayLines[], old/new totals, contractDays, billableDays, effectiveMileageLimitKm, totalUsageMileageKm, lateCandidateRub, mileageCandidateRub, selectedSurchargeRub, fuelCharges[], washRub?, includedVatRub, overridesToConfirm[], warnings[], explanation[]. Цена топлива — 80 ₽/л, не вводится клиентом как доверенный параметр. Временной quote не фиксирует деньги и не гарантирует свободную машину.
 

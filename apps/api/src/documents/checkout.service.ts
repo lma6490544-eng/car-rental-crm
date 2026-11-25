@@ -8,6 +8,7 @@ import { checkoutState, guardCheckoutChange } from './checkout-state';
 import { assertInspectionIdle, listInspectionWork } from './inspection-work';
 import { recordActSignature, recordContractSignature } from './document-signing';
 import { actMatchesCustomer } from './act-customer';
+import { recordRentalStart } from '../push/rental-event';
 
 async function currentPickupAct(
   c: PoolClient,
@@ -51,15 +52,7 @@ export class CheckoutService {
            WHERE booking_checkouts.stopped_at IS NOT NULL RETURNING booking_id`,
           [id, request.auth!.user.id],
         );
-        if (inserted.rowCount)
-          await audit(
-            c,
-            request.auth!.user.id,
-            'booking',
-            'checkout.started',
-            id,
-            request.requestId,
-          );
+        if (inserted.rowCount) await recordRentalStart(c, request, id, 'checkout.started');
         return { id };
       },
       false,
@@ -173,7 +166,7 @@ export class CheckoutService {
           );
         const vehicle = (
           await c.query<{ is_ready: boolean; busy: boolean }>(
-            `SELECT v.is_ready,EXISTS(SELECT 1 FROM booking_checkouts x WHERE x.issued_vehicle_id=v.id)
+            `SELECT v.is_ready,EXISTS(SELECT 1 FROM booking_checkouts x WHERE x.issued_vehicle_id=v.id AND to_jsonb(x)->>'returned_at' IS NULL)
          OR EXISTS(SELECT 1 FROM schedule_blocks a WHERE a.vehicle_id=v.id AND a.booking_id IS DISTINCT FROM $2
            AND a.retired_at IS NULL AND a.start_at<=now() AND a.end_at>now()) AS busy
          FROM vehicles v WHERE v.id=$1 AND v.archived_at IS NULL FOR SHARE OF v`,

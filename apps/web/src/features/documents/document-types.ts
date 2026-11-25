@@ -86,7 +86,7 @@ export type BookingDocuments = {
     customerId: number;
     version: number;
     vehicleId: number | null;
-    status: 'confirmed' | 'cancelled';
+    status: 'confirmed' | 'cancelled' | 'completed' | 'completed_early';
   };
   photos: PrivateFile[];
   inspections: InspectionVersion[];

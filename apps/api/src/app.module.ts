@@ -28,13 +28,17 @@ import { PrivateStorage } from './documents/private-storage';
 import { DocumentPrintService } from './documents/document-print.service';
 import { ActsService } from './documents/acts.service';
 import { CheckoutService } from './documents/checkout.service';
+import { RentalReturnService } from './documents/rental-return.service';
 import { DocumentWorker } from './documents/document-worker';
 import { DocumentSchemaGuard } from './documents/document-schema.guard';
 import { AccountingEmailWorker } from './scheduling/accounting-email.worker';
+import { PushController } from './push/push.controller';
+import { PushWorker } from './push/push.worker';
 
 @Module({
   controllers: [
     HealthController,
+    PushController,
     AuthController,
     UsersController,
     OperationsController,
@@ -48,6 +52,7 @@ import { AccountingEmailWorker } from './scheduling/accounting-email.worker';
   ],
   providers: [
     DatabaseService,
+    PushWorker,
     CommandsService,
     CatalogService,
     SchedulingService,
@@ -64,6 +69,7 @@ import { AccountingEmailWorker } from './scheduling/accounting-email.worker';
     DocumentWorker,
     AccountingEmailWorker,
     CheckoutService,
+    RentalReturnService,
     ActsService,
     DocumentPrintService,
     DocumentSchemaGuard,

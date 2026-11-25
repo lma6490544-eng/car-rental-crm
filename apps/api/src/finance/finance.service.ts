@@ -9,6 +9,7 @@ import type { CheckoutReceiptInput, FinanceInput, InvoiceReceiptInput } from './
 import {
   bookingSummaries,
   bounded,
+  depositReserveReleaseAt,
   funds,
   recordEvent,
   rentPaymentProgress,
@@ -29,6 +30,7 @@ type Allocation = {
   fund: FundId | null;
   bookingId: number | null;
   amount: bigint;
+  availableAt?: Date | null;
 };
 type Plan = {
   allocations: Allocation[];
@@ -38,6 +40,7 @@ type Plan = {
   bookingId: number | null | undefined;
   newLot?: { origin: 'rent' | 'deposit'; method: PaymentMethod };
   reversalOf?: number;
+  reserveReleaseAt?: Date;
 };
 
 type OperationContextRow = { booking_id: number | null; customer_id: number | null };
@@ -45,7 +48,7 @@ type OperationRow = OperationContextRow & {
   id: number;
   command_id: string;
   request_hash: string;
-  kind: FinanceInput['kind'] | 'charge';
+  kind: Exclude<FinanceInput['kind'], 'deposit_settlement'> | 'charge';
   actor_id: number | null;
   reason: string;
   // pg also decodes PostgreSQL timestamp infinities as numbers.
@@ -59,6 +62,7 @@ type AllocationRow = {
   bucket: AllocationBucket;
   booking_id: number | null;
   amount_rub: string;
+  available_at: Date | null;
   fund: FundId | null;
 };
 type FundEntryRow = {
@@ -85,9 +89,11 @@ type JournalRow = OperationRow & {
     bucket: AllocationBucket;
     bookingId: number | null;
     amountRub: string;
+    availableAt?: string;
   }[];
   chargeRub: string | null;
   reversedBy: number | null;
+  completedRental: boolean;
 };
 
 @Injectable()
@@ -103,16 +109,29 @@ export class FinanceService {
           `SELECT o.*,u.full_name AS author,c.display_name AS customer_name,
      coalesce((SELECT jsonb_agg(jsonb_build_object('fund',e.fund,'amountRub',e.amount_rub::text,'initial',e.is_initial) ORDER BY e.id) FROM finance_fund_entries e WHERE e.operation_id=o.id),'[]') AS funds,
      coalesce((SELECT jsonb_agg(jsonb_build_object('method',e.method,'amountRub',e.amount_rub::text) ORDER BY e.id) FROM finance_external e WHERE e.operation_id=o.id),'[]') AS external,
-     coalesce((SELECT jsonb_agg(jsonb_build_object('lotId',a.lot_id,'bucket',a.bucket,'bookingId',a.booking_id,'amountRub',a.amount_rub::text) ORDER BY a.id) FROM finance_allocations a WHERE a.operation_id=o.id),'[]') AS allocations,
+     coalesce((SELECT jsonb_agg(jsonb_build_object('lotId',a.lot_id,'bucket',a.bucket,'bookingId',a.booking_id,'amountRub',a.amount_rub::text)
+       || jsonb_strip_nulls(jsonb_build_object('availableAt',a.available_at)) ORDER BY a.id)
+       FROM (
+         SELECT min(id) AS id,lot_id,bucket,booking_id,available_at,sum(amount_rub) AS amount_rub
+         FROM finance_allocations WHERE operation_id=o.id
+         GROUP BY lot_id,bucket,booking_id,fund,available_at,CASE WHEN available_at IS NULL THEN id END
+         HAVING sum(amount_rub)<>0
+       ) a),'[]') AS allocations,
      (SELECT amount_rub::text FROM finance_charges WHERE operation_id=o.id) AS "chargeRub",
-     (SELECT id FROM financial_operations WHERE reversal_of=o.id) AS "reversedBy"
+     (SELECT id FROM financial_operations WHERE reversal_of=o.id) AS "reversedBy",
+     EXISTS (SELECT 1 FROM bookings b WHERE b.id=o.booking_id AND b.status IN ('completed','completed_early')) AS "completedRental"
      FROM financial_operations o LEFT JOIN users u ON u.id=o.actor_id LEFT JOIN customers c ON c.id=o.customer_id
-     WHERE EXISTS (SELECT 1 FROM finance_external e WHERE e.operation_id=o.id AND e.amount_rub<>0)
+     WHERE (EXISTS (SELECT 1 FROM finance_external e WHERE e.operation_id=o.id AND e.amount_rub<>0)
+       OR (($1::int IS NOT NULL OR $2::int IS NOT NULL) AND EXISTS (
+         SELECT 1 FROM finance_allocations a WHERE a.operation_id=o.id AND a.available_at IS NOT NULL
+       )))
        AND ($1::int IS NULL OR o.customer_id=$1) AND ($2::int IS NULL OR o.booking_id=$2)
      ORDER BY o.id DESC LIMIT 200`,
           [customerId ?? null, bookingId ?? null],
         )
-      ).rows,
+      ).rows.map(({ completedRental, ...row }) =>
+        completedRental ? { ...row, rentalId: row.booking_id } : row,
+      ),
     };
   }
   async customer(c: PoolClient, id: number) {
@@ -152,7 +171,9 @@ export class FinanceService {
     return ids.map((id) => {
       const summary = summaries.get(id)!;
       const state = states.get(id);
-      const paymentsAllowed = summary.status === 'confirmed' && state !== undefined;
+      const paymentsAllowed =
+        summary.status.startsWith('completed') ||
+        (summary.status === 'confirmed' && state !== undefined);
       if (!state?.hasMoney && !paymentsAllowed) return { ...summary, paymentsAllowed };
       const balance = BigInt(summary.priceRub) - BigInt(summary.coverageRub);
       return {
@@ -342,6 +363,7 @@ export class FinanceService {
         fund: a.fund,
         bookingId: a.booking_id,
         amount: -BigInt(a.amount_rub),
+        availableAt: a.available_at,
       }));
       for (const f of (
         await c.query<FundEntryRow>('SELECT * FROM finance_fund_entries WHERE operation_id=$1', [
@@ -353,7 +375,7 @@ export class FinanceService {
         await c.query<ExternalRow>('SELECT * FROM finance_external WHERE operation_id=$1', [old.id])
       ).rows.map((e) => ({ method: e.method, amount: -BigInt(e.amount_rub) }));
     } else if (input.kind === 'rent_payment' || input.kind === 'deposit_receipt') {
-      if (summary!.status !== 'confirmed')
+      if (summary!.status === 'cancelled')
         fail(
           422,
           'BOOKING_CANCELLED',
@@ -372,6 +394,8 @@ export class FinanceService {
       });
       p.external.push({ method: input.method, amount: n });
       if (input.method === 'cash') fund(origin === 'rent' ? 'operating_cash' : 'deposit_pool', n);
+    } else if (input.kind === 'deposit_settlement') {
+      await this.planDepositSettlement(c, input, summary!, p);
     } else {
       const available = await sources(c, input.customerId);
       const seen = new Set<string>();
@@ -460,35 +484,96 @@ export class FinanceService {
       if (input.kind === 'refund') p.external.push({ method: input.method, amount: -total });
     }
     // Validate compensation and resulting per-source balances before any writes.
-    const deltas = new Map<string, { a: Allocation; n: bigint }>();
+    const asOf = p.allocations.some((a) => a.availableAt)
+      ? (await c.query<{ now: Date }>('SELECT now()')).rows[0].now
+      : new Date(0);
+    const deltas = new Map<string, { a: Allocation; n: bigint; available: bigint }>();
     for (const a of p.allocations) {
       const key = `${a.lotId}:${a.bucket}:${a.bookingId}:${a.fund}`;
-      const entry = deltas.get(key) ?? { a, n: 0n };
+      const entry = deltas.get(key) ?? { a, n: 0n, available: 0n };
       entry.n += a.amount;
+      if (!a.availableAt || a.availableAt <= asOf) entry.available += a.amount;
       deltas.set(key, entry);
     }
-    for (const { a, n } of deltas.values()) {
+    for (const { a, n, available } of deltas.values()) {
       const balance =
         a.lotId === 0
-          ? 0n
-          : BigInt(
-              (
-                await c.query<{ amount: string }>(
-                  'SELECT coalesce(sum(amount_rub),0)::text AS amount FROM finance_allocations WHERE lot_id=$1 AND bucket=$2 AND booking_id IS NOT DISTINCT FROM $3 AND fund IS NOT DISTINCT FROM $4',
-                  [a.lotId, a.bucket, a.bookingId, a.fund],
-                )
-              ).rows[0].amount,
-            );
-      if (balance + n < 0n)
+          ? { amount: '0', available: '0' }
+          : (
+              await c.query<{ amount: string; available: string }>(
+                `SELECT coalesce(sum(amount_rub),0)::text AS amount,
+                 coalesce(sum(amount_rub) FILTER (WHERE available_at IS NULL OR available_at<=now()),0)::text AS available
+               FROM finance_allocations WHERE lot_id=$1 AND bucket=$2
+               AND booking_id IS NOT DISTINCT FROM $3 AND fund IS NOT DISTINCT FROM $4`,
+                [a.lotId, a.bucket, a.bookingId, a.fund],
+              )
+            ).rows[0];
+      if (BigInt(balance.amount) + n < 0n || BigInt(balance.available) + available < 0n)
         fail(
           422,
           'INSUFFICIENT_SOURCE',
           'Средства уже использованы. Сначала компенсируйте зависимые операции.',
         );
-      bounded(balance + n);
+      bounded(BigInt(balance.amount) + n);
     }
     return p;
   }
+  private async planDepositSettlement(
+    c: PoolClient,
+    input: Extract<FinanceInput, { kind: 'deposit_settlement' }>,
+    summary: Awaited<ReturnType<typeof bookingSummary>>,
+    plan: Plan,
+  ) {
+    const releaseAt = await depositReserveReleaseAt(c, input.bookingId);
+    if (!summary.status.startsWith('completed') || !releaseAt)
+      fail(422, 'RETURN_UNAVAILABLE', 'Сначала подтвердите приёмку автомобиля.');
+    if (summary.depositRub !== input.expectedDepositRub)
+      fail(409, 'DEPOSIT_BALANCE_CHANGED', 'Остаток залога изменился. Проверьте сумму.');
+    const deposit = BigInt(summary.depositRub);
+    let reserveLeft = BigInt(input.reserveRub);
+    if (reserveLeft > deposit)
+      fail(422, 'RESERVE_EXCEEDS_DEPOSIT', 'Резерв не может превышать остаток залога.');
+
+    const available = await sources(c, input.customerId);
+    const deposits = available.filter(
+      (source) =>
+        source.bucket === 'deposit' &&
+        source.bookingId === input.bookingId &&
+        source.method === 'cash' &&
+        source.fund === 'deposit_pool',
+    );
+    if (deposits.reduce((sum, source) => sum + BigInt(source.availableRub), 0n) !== deposit)
+      fail(422, 'SOURCE_FUND_UNKNOWN', 'У залога отсутствует подтверждённый источник средств.');
+    for (const source of deposits) {
+      const amount = BigInt(source.availableRub);
+      const reserve = amount < reserveLeft ? amount : reserveLeft;
+      plan.allocations.push({
+        lotId: source.lotId,
+        bucket: 'deposit',
+        bookingId: input.bookingId,
+        fund: 'deposit_pool',
+        amount: -amount,
+      });
+      if (reserve > 0n) {
+        plan.allocations.push({
+          lotId: source.lotId,
+          bucket: 'credit',
+          bookingId: null,
+          fund: 'deposit_pool',
+          amount: reserve,
+          availableAt: releaseAt,
+        });
+        reserveLeft -= reserve;
+      }
+    }
+    if (input.reserveRub !== '0') plan.reserveReleaseAt = releaseAt;
+    const returned = deposit - BigInt(input.reserveRub);
+    if (returned > 0n) {
+      plan.funds.deposit_pool = -returned;
+      plan.external.push({ method: 'cash', amount: -returned });
+    }
+  }
+
   async warning(c: PoolClient, input: FinanceInput, p: Plan) {
     const state = await funds(c);
     const projected = state.items.map((f) => ({
@@ -518,7 +603,8 @@ export class FinanceService {
   }
 
   async postCheckoutReceipt(input: CheckoutReceiptInput, r: AuthRequest) {
-    const { cashRub, bankRub, kind, ...booking } = input;
+    const { cashRub, bankRub, kind, bookingId, customerId, expectedVersion, reason } = input;
+    const booking = { bookingId, customerId, expectedVersion, reason };
     const cash = { ...booking, kind, method: 'cash' as const, amountRub: cashRub };
     if (kind === 'deposit_receipt' || bankRub === '0') {
       return this.postOperations(input, [cash], r);
@@ -573,6 +659,23 @@ export class FinanceService {
           return { id: existing.id };
         }
         await this.lock(c, first);
+        if ('cashRub' in fingerprint) {
+          const summary = await this.checkoutSummary(c, fingerprint.bookingId);
+          const completed = summary.status.startsWith('completed');
+          if (fingerprint.returnDebtRub !== undefined) {
+            if (!completed)
+              fail(422, 'RETURN_UNAVAILABLE', 'Сначала подтвердите приёмку автомобиля.');
+            if (summary.debtRub !== fingerprint.returnDebtRub)
+              fail(409, 'RETURN_BALANCE_CHANGED', 'Остаток к оплате изменился. Проверьте сумму.');
+            if (BigInt(fingerprint.cashRub) + BigInt(fingerprint.bankRub) > BigInt(summary.debtRub))
+              fail(422, 'DEBT_EXCEEDED', 'Оплата превышает остаток по аренде.');
+          } else if (completed)
+            fail(
+              422,
+              'RENTAL_COMPLETED',
+              'Оформите операцию по завершённой аренде в разделе «Платежи».',
+            );
+        }
         const result = await this.recordOperation(
           c,
           first,
@@ -610,13 +713,19 @@ export class FinanceService {
         'Физических денег недостаточно. Проверьте актуальные остатки, подтвердите предупреждение и укажите причину.',
         warning,
       );
+    const kind =
+      input.kind === 'deposit_settlement'
+        ? p.external.length
+          ? 'refund'
+          : 'to_credit'
+        : input.kind;
     const op = (
       await c.query<{ id: number }>(
         `INSERT INTO financial_operations(command_id,request_hash,kind,customer_id,booking_id,actor_id,reason,reversal_of) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
         [
           commandId,
           requestHash,
-          input.kind,
+          kind,
           p.customerId ?? null,
           p.bookingId ?? null,
           r.auth!.user.id,
@@ -635,8 +744,16 @@ export class FinanceService {
       ).rows[0].id;
     for (const a of p.allocations)
       await c.query(
-        'INSERT INTO finance_allocations(operation_id,lot_id,bucket,booking_id,amount_rub,fund) VALUES ($1,$2,$3,$4,$5,$6)',
-        [op.id, a.lotId || lotId, a.bucket, a.bookingId, a.amount.toString(), a.fund],
+        'INSERT INTO finance_allocations(operation_id,lot_id,bucket,booking_id,amount_rub,fund,available_at) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [
+          op.id,
+          a.lotId || lotId,
+          a.bucket,
+          a.bookingId,
+          a.amount.toString(),
+          a.fund,
+          a.availableAt ?? null,
+        ],
       );
     for (const [fund, n] of Object.entries(p.funds)) {
       if (n === 0n && input.kind !== 'initial') continue;
@@ -665,6 +782,9 @@ export class FinanceService {
       reason: input.reason,
       shortfallAcknowledged: warning.negative.length > 0,
       negativeFunds: warning.negative,
+      ...(input.kind === 'deposit_settlement'
+        ? { reserveRub: input.reserveRub, releaseAt: p.reserveReleaseAt }
+        : {}),
       ...(invoiceReceipt
         ? {
             invoiceReceipt: { paidOn: invoiceReceipt.paidOn, reference: invoiceReceipt.reference },

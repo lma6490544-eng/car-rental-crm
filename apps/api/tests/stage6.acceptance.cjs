@@ -696,7 +696,7 @@ test(
     }
     await freshEvent.click({ button: 'right', timeout: 10000 });
     await page.getByRole('menuitem', { name: 'Создать договор', exact: true }).click();
-    const freshDrawer = page.getByRole('dialog');
+    const freshDrawer = page.getByRole('dialog').and(page.locator('.ant-drawer-content'));
     const freshPath = '/bookings/' + newCheckout.bookingId;
     const stopButton = freshDrawer.getByRole('button', {
       name: 'Прекратить оформление',
@@ -933,7 +933,7 @@ test(
     await tablet.clock.setFixedTime(new Date('2026-11-23T10:00:00+03:00'));
     await tablet.goto(webOrigin + '/calendar');
     await tablet.locator('.calendar-event').filter({ hasText: 'Проверочная Анна' }).click();
-    const tabletDrawer = tablet.getByRole('dialog');
+    const tabletDrawer = tablet.getByRole('dialog').and(tablet.locator('.ant-drawer-content'));
     const tabletAct = tabletDrawer.getByRole('tab', { name: /^Акт.*X321XX774/ });
     await tabletAct.click();
     await tabletDrawer.getByRole('button', { name: 'Начать осмотр', exact: true }).click();
@@ -1019,7 +1019,7 @@ test(
     await page.getByText('Загрузка дат…', { exact: true }).waitFor({ state: 'hidden' });
     await bookingEvent.click({ button: 'right', timeout: 10000 });
     await page.getByRole('menuitem', { name: 'Открыть договор' }).click({ timeout: 10000 });
-    const drawer = page.getByRole('dialog');
+    const drawer = page.getByRole('dialog').and(page.locator('.ant-drawer-content'));
     const driverSection = drawer
       .locator('.checkout-sections')
       .getByRole('tab', { name: /^Водитель/ });
@@ -1628,7 +1628,10 @@ test(
     }, 'actual handover');
     assert.equal(issuedCheckout.currentContractSigned, true);
     assert.equal(issuedCheckout.currentActSigned, true);
-    await closedSection(/^Акт.*Марка 1 Модель/).waitFor();
+    await sections
+      .locator('.checkout-section-act')
+      .getByRole('tab', { name: /^Акт.*Марка 1 Модель/, expanded: false })
+      .waitFor();
     await drawer.getByText('Автомобиль выдан', { exact: true }).waitFor();
     assert.equal(await leftSteps.getByText('Подписан', { exact: true }).count(), 2);
     await call(base + '/checkout/issue', {
@@ -1642,13 +1645,13 @@ test(
     assert.equal(await pay.isDisabled(), true);
     await drawer.locator('button.ant-drawer-close').click();
     await drawer.waitFor({ state: 'hidden' });
-    await bookingEvent.and(page.locator('.booking-unpaid')).waitFor();
+    await bookingEvent.and(page.locator('.booking-partially-paid')).waitFor();
     await bookingEvent.click();
     const issuedTag = drawer
       .locator('.ant-drawer-title .ant-tag')
       .getByText('Автомобиль выдан', { exact: true });
     await issuedTag.waitFor();
-    await checkoutCollapse.getByRole('tab', { name: 'Акт приемки', exact: true }).waitFor();
+    await checkoutCollapse.getByRole('tab', { name: /^Акт приёмки/ }).waitFor();
     assert.equal(await checkoutCollapse.locator(':scope > .checkout-section').count(), 6);
     assert.equal(await leftSteps.locator('.ant-steps-item').count(), 6);
     assert.equal(await checkoutCollapse.getByRole('tab', { expanded: true }).count(), 0);
@@ -1671,15 +1674,70 @@ test(
     await issuedTag.waitFor();
     await drawer.locator('button.ant-drawer-close').click();
     await drawer.waitFor({ state: 'hidden' });
+    const pendingReturn = Promise.withResolvers();
+    const releaseReturn = Promise.withResolvers();
+    await page.route(
+      '**/api/v1' + base + '/return/start',
+      async (route) => {
+        pendingReturn.resolve();
+        await releaseReturn.promise;
+        await route.continue();
+      },
+      { times: 1 },
+    );
+    const startResponse = page.waitForResponse((response) =>
+      response.url().endsWith(base + '/return/start'),
+    );
+    try {
+      await bookingEvent.click({ button: 'right' });
+      await completeRental.click();
+      await pendingReturn.promise;
+      await bookingEvent.click();
+      await issuedTag.waitFor();
+    } finally {
+      releaseReturn.resolve();
+    }
+    assert.equal((await startResponse).status(), 201);
+    await bookingEvent.getByRole('img', { name: 'Приёмка' }).waitFor();
+    assert.equal(
+      await checkoutCollapse
+        .getByRole('tab', { name: /^Акт приёмки/ })
+        .getAttribute('aria-expanded'),
+      'false',
+    );
+    await drawer.locator('button.ant-drawer-close').click();
+    await drawer.waitFor({ state: 'hidden' });
     await bookingEvent.click({ button: 'right' });
     await completeRental.click();
-    await checkoutCollapse
-      .getByRole('tab', { name: 'Акт приемки', exact: true, expanded: true })
-      .waitFor();
-    await leftSteps.getByText('Сдача автомобиля', { exact: true }).click();
-    await checkoutCollapse
-      .getByRole('tab', { name: 'Сдача автомобиля', exact: true, expanded: true })
-      .waitFor();
+    await bookingEvent.getByRole('img', { name: 'Приёмка' }).waitFor();
+    await checkoutCollapse.getByRole('tab', { name: /^Акт приёмки/, expanded: true }).waitFor();
+    const pushCard = webOrigin + '/rentals/' + individual.bookingId;
+    const fromPush = await page.context().newPage();
+    await fromPush.goto(pushCard + '?step=checkout');
+    await fromPush.getByRole('tab', { name: /^Водитель/, expanded: true }).waitFor();
+    await fromPush.goto(pushCard + '?step=return');
+    await fromPush.getByRole('tab', { name: /^Акт приёмки/, expanded: true }).waitFor();
+    await fromPush.close();
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT id FROM audit_logs WHERE action='rentalReturn.started' AND entity_id=$1",
+          [individual.bookingId],
+        )
+      ).rowCount,
+      1,
+    );
+    const returnVehicleStep = leftSteps.locator('.ant-steps-item').filter({
+      has: page.getByText('Сдача автомобиля', { exact: true }),
+    });
+    const returnVehicleTab = checkoutCollapse.getByRole('tab', {
+      name: /^Сдача автомобиля/,
+    });
+    await returnVehicleStep.getByText('Нужен осмотр', { exact: true }).waitFor();
+    assert.equal(await returnVehicleStep.getAttribute('aria-disabled'), 'true');
+    assert.equal(await returnVehicleTab.getAttribute('aria-disabled'), 'true');
+    await returnVehicleTab.press('Enter');
+    assert.equal(await returnVehicleTab.getAttribute('aria-expanded'), 'false');
     await drawer.locator('button.ant-drawer-close').click();
     await drawer.waitFor({ state: 'hidden' });
 
@@ -1964,5 +2022,318 @@ test(
     );
     assert.equal(actSnapshot.customer_version, customerAfterEdit.version);
     assert.equal(actSnapshot.snapshot.customerSigner, 'Проверочная Мария');
+
+    const { calculate } = require('../dist/pricing/calculate');
+    const { ruleSets } = require('../dist/pricing/rules');
+    const start = new Date(Date.now() - 27 * 3600000).toISOString();
+    const group = (
+      await pool.query(
+        "SELECT id,name,tariff_code AS code FROM pricing_groups WHERE tariff_code='economy'",
+      )
+    ).rows[0];
+    const returnTerms = calculate(
+      {
+        operationKind: 'initial',
+        startAt: start,
+        contractDays: 2,
+        dailyMileagePackageKm: 250,
+        clearOverrides: false,
+        wash: false,
+      },
+      ruleSets.at(-1),
+      group,
+    );
+    await pool.query('UPDATE booking_terms SET snapshot=$2 WHERE booking_id=$1', [
+      individual.bookingId,
+      returnTerms,
+    ]);
+    await pool.query('UPDATE booking_checkouts SET issued_at=$2 WHERE booking_id=$1', [
+      individual.bookingId,
+      start,
+    ]);
+    await page.goto(webOrigin + '/rentals/' + individual.bookingId);
+    // Reproduce the Web Crypto API available when the phone opens the CRM over LAN HTTP.
+    await page.evaluate(() => Object.defineProperty(crypto, 'randomUUID', { value: undefined }));
+    const returnActHeader = checkoutCollapse.locator(
+      '.checkout-section-return-act > .ant-collapse-header',
+    );
+    const returnActTab = returnActHeader.getByRole('tab', { name: /^Акт приёмки/ });
+    const fillInspection = returnActHeader.getByRole('button', {
+      name: 'Заполнить осмотр',
+      exact: true,
+    });
+    await returnActTab.click();
+    assert.equal(await returnActTab.getAttribute('aria-expanded'), 'false');
+    await fillInspection.click();
+    await returnActHeader.getByRole('tab', { name: /^Акт приёмки/, expanded: true }).waitFor();
+    const workLabel = 'Осмотр заполняется. Ответственный: Тестовый оператор';
+    await returnActHeader.getByText(workLabel, { exact: true }).waitFor();
+    await leftSteps.getByRole('status', { name: workLabel }).locator('.anticon-loading').waitFor();
+    const saveInspection = returnActHeader.getByRole('button', {
+      name: 'Сохранить акт',
+      exact: true,
+    });
+    await drawer.getByRole('textbox', { name: 'Замечания', exact: true }).fill('Черновик');
+    const returnActCard = checkoutCollapse.locator('.checkout-section-return-act');
+    const returnPhotos = returnActCard.getByRole('region', { name: 'Фотографии приёмки' });
+    const returnPhoto = returnPhotos.locator('.ant-upload-list-item-done');
+    await returnPhotos
+      .locator('input[type="file"][capture="environment"]')
+      .setInputFiles(filePayload);
+    await returnPhoto.waitFor();
+    const uploadedReturnPhoto = (await call(base + '/return')).photos.find(
+      ({ status }) => status === 'ready',
+    );
+    async function removeReturnPhoto() {
+      await page.mouse.move(0, 0);
+      const actions = returnPhoto.locator('.ant-upload-list-item-actions');
+      await waitUntil(
+        () => actions.evaluate((element) => getComputedStyle(element).opacity === '0'),
+        'return photo remove button hidden before hover',
+      );
+      await returnPhoto.hover();
+      await actions.getByRole('button').click();
+      await returnPhoto.waitFor({ state: 'hidden' });
+    }
+    await removeReturnPhoto();
+    assert.equal(await returnVehicleTab.getAttribute('aria-disabled'), 'true');
+    await returnActHeader.getByRole('button', { name: 'Отменить', exact: true }).click();
+    await page.getByRole('button', { name: 'Отменить изменения', exact: true }).click();
+    await returnActHeader.getByText(workLabel, { exact: true }).waitFor({ state: 'hidden' });
+    await fillInspection.click();
+    await returnPhoto.waitFor();
+    await removeReturnPhoto();
+    assert.equal(
+      await drawer.getByRole('textbox', { name: 'Замечания', exact: true }).inputValue(),
+      '',
+    );
+    const waitForSettlementReview = () =>
+      page.waitForResponse(
+        (response) => response.url().endsWith(base + '/return/review') && response.ok(),
+      );
+    const automaticReview = waitForSettlementReview();
+    await saveInspection.click();
+    assert.equal((await (await automaticReview).json()).calculation.lines.wash, '0');
+    await returnActHeader.getByText('Осмотр сохранён', { exact: true }).waitFor();
+    assert.ok(
+      !(await call(base + '/return')).photos.some(({ id }) => id === uploadedReturnPhoto.id),
+    );
+    assert.equal(await returnVehicleStep.getAttribute('aria-disabled'), null);
+    assert.equal(await returnVehicleTab.getAttribute('aria-disabled'), 'false');
+    await returnVehicleStep.getByText('Сдача автомобиля', { exact: true }).click();
+    await checkoutCollapse
+      .getByRole('tab', { name: /^Сдача автомобиля/, expanded: true })
+      .waitFor();
+    const settlementCard = checkoutCollapse.locator('.checkout-section-return-vehicle');
+    const settlementHeader = settlementCard.locator(':scope > .ant-collapse-header');
+    const confirmReturn = settlementHeader.getByRole('button', {
+      name: 'Подтвердить приёмку',
+      exact: true,
+    });
+    assert.equal(
+      await drawer.getByRole('button', { name: 'Рассчитать итог', exact: true }).count(),
+      0,
+    );
+    await settlementCard.getByText('Итоговый расчёт', { exact: true }).waitFor();
+    assert.equal(await returnActCard.getByText('Итоговый расчёт', { exact: true }).count(), 0);
+    const washOption = settlementCard.getByRole('checkbox', { name: 'Начислить мойку 1 000 ₽' });
+    const withWash = waitForSettlementReview();
+    await washOption.check();
+    assert.equal((await (await withWash).json()).calculation.lines.wash, '1000');
+    await settlementCard.getByRole('link', { name: 'Платежи' }).click();
+    await unsavedDialog.getByText('Сдача автомобиля', { exact: true }).waitFor();
+    await unsavedDialog.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await unsavedDialog.waitFor({ state: 'hidden' });
+    assert.equal(await washOption.isChecked(), true);
+    const withoutWash = waitForSettlementReview();
+    await washOption.uncheck();
+    assert.equal((await (await withoutWash).json()).calculation.lines.wash, '0');
+    await settlementCard.getByRole('button', { name: 'Изменить строку «Топливо»' }).click();
+    assert.equal(await confirmReturn.isDisabled(), true);
+    await settlementCard.getByRole('textbox', { name: 'Сумма, ₽' }).fill('450');
+    const withAdjustment = waitForSettlementReview();
+    await settlementCard
+      .getByRole('textbox', { name: 'Причина', exact: true })
+      .fill('Сверено с актом');
+    assert.equal((await (await withAdjustment).json()).calculation.lines.fuel, '450');
+    const pendingRent = settlementCard.getByRole('region', { name: 'Аренда', exact: true });
+    const pendingDeposit = settlementCard.getByRole('region', { name: 'Залог', exact: true });
+    const cashMethod = pendingRent.getByRole('checkbox', { name: 'Наличными' });
+    const cardMethod = pendingRent.getByRole('checkbox', { name: 'Картой' });
+    const pendingPayment = pendingRent.getByRole('button', { name: 'Подтвердить оплату аренды' });
+    const pendingPayout = pendingDeposit.getByRole('button', {
+      name: 'Подтвердить расчёт по залогу',
+    });
+    await cashMethod.waitFor();
+    await cardMethod.waitFor();
+    const withDebt = waitForSettlementReview();
+    await settlementCard.getByRole('textbox', { name: 'Сумма, ₽' }).fill('50000');
+    assert.ok(BigInt((await (await withDebt).json()).calculation.debtRub) > 0n);
+    await cashMethod.check();
+    await pendingRent.getByRole('textbox', { name: 'Аренда наличными, ₽' }).fill('400');
+    assert.equal(await pendingPayment.isDisabled(), true);
+    await cashMethod.uncheck();
+    await pendingDeposit.getByRole('radio', { name: 'Оставить часть в резерве на штрафы' }).check();
+    await pendingDeposit.getByLabel('Сумма резерва').fill('4000');
+    await pendingDeposit.getByLabel('Причина операции').fill('Подготовлено до подтверждения');
+    assert.equal(await pendingPayout.isDisabled(), true);
+
+    const withoutAdjustment = waitForSettlementReview();
+    await settlementCard.getByRole('button', { name: 'Сбросить', exact: true }).click();
+    assert.equal((await (await withoutAdjustment).json()).calculation.lines.fuel, '0');
+    await confirmReturn.click();
+    await drawer.getByRole('button', { name: 'Исправить приёмку', exact: true }).waitFor();
+    assert.equal((await call(base + '/return')).finance.status, 'completed_early');
+    await waitUntil(
+      async () => !(await pendingPayout.isDisabled()),
+      'deposit draft is ready to post',
+    );
+    assert.equal(await pendingDeposit.getByLabel('Сумма резерва').inputValue(), '4000');
+    assert.equal(
+      await pendingDeposit.getByLabel('Причина операции').inputValue(),
+      'Подготовлено до подтверждения',
+    );
+    assert.equal((await call(base + '/return')).finance.depositRub, '10000');
+    await page.reload();
+    await drawer.getByRole('button', { name: 'Исправить приёмку', exact: true }).waitFor();
+    const returned = (await call(base + '/return')).rental;
+    const latePhoto = await call(base + '/inspection-photos/check_in/' + returned.version, {
+      file: { mime: 'image/png', bytes: png },
+      status: 201,
+    });
+    await waitUntil(
+      async () =>
+        (await call(base + '/return')).photos.find(
+          (photo) => photo.id === latePhoto.id && photo.status === 'ready',
+        ),
+      'late return photo published',
+    );
+    const {
+      rows: [expiry],
+    } = await pool.query(
+      `SELECT count(*)::int AS total,count(*) FILTER (
+         WHERE delete_after=$2::timestamptz+interval '720 hours'
+       )::int AS expiring FROM private_files
+       WHERE booking_id=$1 AND category='inspection_photo' AND deleted_at IS NULL`,
+      [individual.bookingId, returned.returnedAt],
+    );
+    assert.ok(expiry.total >= 3);
+    assert.equal(expiry.total, expiry.expiring);
+    const adjustedTime = Math.floor(Date.parse(returned.returnedAt) / 1000) * 1000 - 5 * 60000;
+    const adjustedAt = new Date(adjustedTime).toISOString();
+    const adjustedMoscow = new Date(adjustedTime + 3 * 3600000).toISOString().slice(0, 19);
+    await returnActHeader.getByRole('button', { name: 'Исправить приёмку', exact: true }).click();
+    await returnActCard.locator('input[type="datetime-local"]').fill(adjustedMoscow);
+    await returnActCard
+      .getByRole('textbox', { name: 'Причина исправления' })
+      .fill('Время уточнили по бумажному акту');
+    await returnActHeader.getByRole('button', { name: 'К расчёту исправления' }).click();
+    await settlementCard.getByRole('button', { name: 'Показать разницу в расчёте' }).click();
+    await settlementHeader.getByRole('button', { name: 'Подтвердить исправление' }).click();
+    await returnActHeader.getByRole('button', { name: 'Исправить приёмку', exact: true }).waitFor();
+    const photosAfterCorrection = (await call(base + '/documents')).photos;
+    assert.equal(
+      photosAfterCorrection.find(({ id }) => id === latePhoto.id).deleteAfter,
+      new Date(Date.parse(adjustedAt) + 30 * 86400000).toISOString(),
+    );
+    assert.equal(photosAfterCorrection.find(({ id }) => id === photo.id).status, 'deleted');
+    await call(photoUrl, { status: 410, code: 'FILE_EXPIRED' });
+    await returnVehicleStep.getByText('Сдача автомобиля', { exact: true }).click();
+    await settlementCard.getByText('Начислить ущерб', { exact: true }).click();
+    await settlementCard.getByLabel('Сумма ущерба, ₽').fill('400');
+    await settlementCard.getByLabel('Причина начисления').fill('Повреждение при возврате');
+    await drawer.locator('button.ant-drawer-close').click();
+    await unsavedDialog.getByText('Сдача автомобиля', { exact: true }).waitFor();
+    await unsavedDialog.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await unsavedDialog.waitFor({ state: 'hidden' });
+
+    const damageRequests = [];
+    await page.route(
+      '**' + base + '/return/damage',
+      async (route) => {
+        damageRequests.push({
+          key: route.request().headers()['idempotency-key'],
+          body: route.request().postDataJSON(),
+        });
+        assert.equal((await route.fetch()).status(), 201);
+        await route.abort('failed');
+      },
+      { times: 2 },
+    );
+    await page.evaluate(() => {
+      Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true });
+    });
+    await settlementCard.getByRole('button', { name: 'Провести начисление' }).click();
+    await settlementCard.getByText(/Нет ответа от сервера/).waitFor();
+    await page.reload();
+    await returnVehicleStep.getByText('Сдача автомобиля', { exact: true }).click();
+    await settlementCard.getByRole('button', { name: 'Повторить отправку' }).click();
+    await settlementCard.getByText(/Нет ответа от сервера/).waitFor();
+    assert.equal(damageRequests.length, 2);
+    assert.match(damageRequests[0].key, /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i);
+    assert.deepEqual(damageRequests[1], damageRequests[0]);
+    await settlementCard.getByRole('button', { name: 'Проверить результат' }).click();
+    await settlementCard
+      .getByRole('button', { name: 'Проверить результат' })
+      .waitFor({ state: 'hidden' });
+    const confirmedCharges = (await call(base + '/return')).damageCharges;
+    assert.deepEqual(
+      confirmedCharges.map((charge) => charge.amountRub),
+      ['400'],
+    );
+
+    const balanceBeforePayment = await call(base + '/return');
+    if (BigInt(balanceBeforePayment.finance.debtRub) < 1200n) {
+      await call(base + '/return/damage', {
+        body: {
+          expectedRevision: balanceBeforePayment.history[0].revision,
+          amountRub: (
+            1200n +
+            BigInt(balanceBeforePayment.finance.overpaymentRub) -
+            BigInt(balanceBeforePayment.finance.debtRub)
+          ).toString(),
+          reason: 'Проверка смешанной доплаты',
+        },
+        status: 201,
+      });
+    }
+    const { finance: dueBeforePayment } = await call(base + '/return');
+    const rentSettlement = settlementCard.getByRole('region', { name: 'Аренда', exact: true });
+    await rentSettlement.getByRole('checkbox', { name: 'Наличными' }).check();
+    await rentSettlement.getByRole('textbox', { name: 'Аренда наличными, ₽' }).fill('400');
+    await rentSettlement.getByRole('checkbox', { name: 'Картой' }).check();
+    await rentSettlement.getByRole('textbox', { name: 'Аренда картой, ₽' }).fill('500');
+    await rentSettlement.getByRole('button', { name: 'Подтвердить оплату аренды' }).click();
+    await waitUntil(
+      async () =>
+        BigInt((await call(base + '/return')).finance.debtRub) ===
+        BigInt(dueBeforePayment.debtRub) - 900n,
+      'mixed payment leaves the unpaid balance',
+    );
+
+    const depositSettlement = settlementCard.getByRole('region', { name: 'Залог', exact: true });
+    await depositSettlement
+      .getByRole('radio', { name: 'Оставить часть в резерве на штрафы' })
+      .check();
+    await depositSettlement.getByLabel('Сумма резерва').fill('4000');
+    await depositSettlement.getByLabel('Причина операции').fill('Резерв на штрафы');
+    assert.match(
+      await depositSettlement.getByText('Выдать наличными').locator('..').textContent(),
+      /6\s000/,
+    );
+    await depositSettlement.getByRole('button', { name: 'Подтвердить расчёт по залогу' }).click();
+    await depositSettlement.getByText(/^Резерв до /).waitFor();
+    const deposited = await call(base + '/return');
+    assert.equal(deposited.finance.depositRub, '0');
+    assert.equal(deposited.reserves[0].amountRub, '4000');
+
+    for (const detail of ['/clients/' + individual.customerId, '/fleet/' + individual.vehicleId]) {
+      await page.goto(webOrigin + detail + '?tab=rentals');
+      await page.getByRole('link', { name: new RegExp('Аренда №' + individual.bookingId) }).click();
+      await page.waitForURL('**/rentals/' + individual.bookingId);
+      await drawer.getByRole('button', { name: 'Исправить приёмку', exact: true }).waitFor();
+      await drawer.locator('button.ant-drawer-close').click();
+      await page.waitForURL('**' + detail + '?tab=rentals');
+    }
   },
 );

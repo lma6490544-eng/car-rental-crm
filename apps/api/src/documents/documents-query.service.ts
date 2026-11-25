@@ -22,11 +22,14 @@ export class DocumentsQueryService {
     return this.db.transaction(async (c) => {
       await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
       const booking = await bookingContext(c, bookingId, false);
+      const returned = booking.status === 'completed' || booking.status === 'completed_early';
       const contract = await this.contracts.latest(c, bookingId);
       return {
         booking,
         vehicle:
-          booking.vehicleId === null ? null : await vehicleSnapshot(c, booking.vehicleId, false),
+          booking.vehicleId === null
+            ? null
+            : await vehicleSnapshot(c, booking.vehicleId, false, returned),
         checkout: await checkoutState(c, bookingId),
         photos: await this.files.bookingPhotos(c, bookingId),
         inspections: await this.inspections.list(c, bookingId),

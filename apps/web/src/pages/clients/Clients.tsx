@@ -13,6 +13,7 @@ import {
   Typography,
 } from 'antd';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { RentalHistory } from '../../features/booking/RentalHistory';
 import { History, PollNotice, useListScroll, usePolling } from '../../catalog';
 import type { Customer } from '../../catalog';
 import { ClientFinance } from '../finance/ClientFinance';
@@ -230,7 +231,9 @@ export default function Clients() {
 export function ClientDetail() {
   const { id } = useParams();
   const location = useLocation();
+  const [tab, setTab] = useSearchParams();
   const poll = usePolling<Customer>('/customers/' + id);
+  useListScroll(location.pathname + location.search, !!poll.data);
   const [action, setAction] = useState<{
     kind: ClientActionKind | 'edit';
     snapshot: Customer;
@@ -296,9 +299,15 @@ export function ClientDetail() {
         <Alert type="warning" message={'Причина блокировки: ' + client.blockedReason} />
       )}
       <Tabs
+        activeKey={tab.get('tab') ?? 'data'}
+        onChange={(key) => setTab({ tab: key }, { replace: true, state: location.state })}
         items={[
           { key: 'data', label: 'Данные', children: <ClientData client={client} /> },
-          { key: 'rentals', label: 'Аренды', disabled: true },
+          {
+            key: 'rentals',
+            label: 'Аренды',
+            children: <RentalHistory source="customers" id={client.id} />,
+          },
           { key: 'deposits', label: 'Залоги', children: <ClientFinance customerId={client.id} /> },
           {
             key: 'notes',

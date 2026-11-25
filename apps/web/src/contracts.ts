@@ -103,7 +103,8 @@ export type Availability = {
 export type ScheduleEvent = {
   accountingEmailUnsent?: true;
   invoicePayment?: RentPaymentProgress;
-  checkoutPhase?: 'started' | 'issued';
+  checkoutPhase?: 'started' | 'issued' | 'completed';
+  returnInProgress?: true;
   id: number | string;
   vehicle_id: number | null;
   booking_id: number | null;
@@ -118,6 +119,7 @@ export type ScheduleEvent = {
   booking_version?: number;
   version?: number;
   financialSummary?: FinancialSummary;
+  paidRatio?: number;
 };
 export type TechnicalBlock = ScheduleEvent & { id: number; version: number };
 export type Inspection = {
@@ -150,6 +152,7 @@ export type CalendarBooking = Omit<Inspection, 'alternatives'> & {
   invoicePayment?: RentPaymentProgress;
   id: number;
   checkoutPhase?: ScheduleEvent['checkoutPhase'];
+  returnInProgress?: true;
   version: number;
   start_at: string;
   end_at: string;
@@ -244,11 +247,12 @@ export type FinancialOperation = {
   customer_id: number | null;
   customer_name: string | null;
   booking_id: number | null;
+  rentalId?: number | null;
   author: string | null;
   chargeRub: string | null;
   external: { method: string; amountRub: string }[];
   funds: { fund: string; amountRub: string }[];
-  allocations: { bucket: string; lotId: number; amountRub: string }[];
+  allocations: { bucket: string; lotId: number; amountRub: string; availableAt?: string }[];
 };
 export type Fund = { id: string; balanceRub: string; initialized: boolean; hasEntries: boolean };
 export type FinanceResponse = {

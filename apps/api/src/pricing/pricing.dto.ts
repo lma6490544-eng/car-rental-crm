@@ -1,8 +1,9 @@
 import { z } from 'zod';
+const rubPattern = /^(0|[1-9]\d{0,18})$/;
 export const rub = z
   .string()
-  .regex(/^(0|[1-9]\d{0,18})$/)
-  .refine((v) => BigInt(v) <= 9223372036854775807n, 'Сумма слишком велика.');
+  .regex(rubPattern)
+  .refine((v) => !rubPattern.test(v) || BigInt(v) <= 9223372036854775807n, 'Сумма слишком велика.');
 const reason = z.string().trim().min(1).max(1000);
 const id = z.number().int().positive().max(2147483647);
 const days = z.number().int().min(1).max(3660);

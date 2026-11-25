@@ -200,7 +200,7 @@ export function calculate(
       );
     days = Math.floor(elapsed / DAY);
     const remainingSeconds = Math.floor((elapsed - days * DAY) / 1000);
-    const basisDay = remainingSeconds > 0 ? days + 1 : days;
+    const basisDay = Math.max(1, remainingSeconds > 0 ? days + 1 : days);
     const hoursPeriod = periods.find((p) => p.fromDay <= basisDay && p.toDay >= basisDay)!;
     const hoursDuration = Math.max(1, days - hoursPeriod.groupStartDay + 1);
     pricingBasis = {

@@ -19,9 +19,27 @@ export async function assertInspectionIdle(
   bookingVersion: number,
   kind: InspectionKind,
 ) {
-  const work = (await listInspectionWork(c, bookingId, bookingVersion)).find(
-    (row) => row.kind === kind,
-  );
+  const work = await findInspectionWork(c, bookingId, bookingVersion, kind);
   if (work)
     fail(409, 'INSPECTION_IN_PROGRESS', 'Дождитесь завершения осмотра: ' + work.operatorName + '.');
+}
+
+export async function findInspectionWork(
+  c: PoolClient,
+  bookingId: number,
+  bookingVersion: number,
+  kind: InspectionKind,
+) {
+  return (await listInspectionWork(c, bookingId, bookingVersion)).find((row) => row.kind === kind);
+}
+
+export function assertInspectionWorkOwner(
+  work: Awaited<ReturnType<typeof findInspectionWork>>,
+  workId: number | undefined,
+  operatorId: number,
+) {
+  if (work && (work.id !== workId || work.operatorId !== operatorId))
+    fail(409, 'INSPECTION_IN_PROGRESS', 'Осмотр заполняет ' + work.operatorName + '.');
+  if (!work && workId !== undefined)
+    fail(409, 'INSPECTION_WORK_CHANGED', 'Статус осмотра изменился. Проверьте карточку.');
 }

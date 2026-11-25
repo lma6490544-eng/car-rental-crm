@@ -101,12 +101,9 @@ export function InspectionEditor({
   const currentInspection = latest?.vehicleId === data.booking.vehicleId ? latest : undefined;
   const path = '/bookings/' + id;
   const photoPath = path + '/inspection-photos';
-  const pickupLocked = kind === 'pickup' && !!data.checkout?.issuedAt;
+  const issued = !!data.checkout?.issuedAt;
   const editable =
-    !disabled &&
-    !pickupLocked &&
-    data.booking.status === 'confirmed' &&
-    data.booking.vehicleId !== null;
+    !disabled && !issued && data.booking.status === 'confirmed' && data.booking.vehicleId !== null;
   const locked = command.locked || disabled;
   const ownWork = !!work && work.operatorId === user?.id;
   const outdated =

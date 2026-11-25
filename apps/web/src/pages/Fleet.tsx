@@ -15,6 +15,7 @@ import {
   Typography,
 } from 'antd';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { RentalHistory } from '../features/booking/RentalHistory';
 import {
   bodyNames,
   transmissionNames,
@@ -492,7 +493,9 @@ function Archive({
 export function VehicleDetail() {
   const { id } = useParams();
   const location = useLocation();
+  const [tab, setTab] = useSearchParams();
   const poll = usePolling<VehicleDetails>('/vehicles/' + id);
+  useListScroll(location.pathname + location.search, !!poll.data);
   const [action, setAction] = useState<{ kind: string; snapshot: Vehicle } | null>(null);
   const v = poll.data;
   if (!v)
@@ -528,6 +531,8 @@ export function VehicleDetail() {
       <PollNotice {...poll} />
       {!v.isReady && <Alert className="notice" type="warning" message={v.readinessReason} />}
       <Tabs
+        activeKey={tab.get('tab') ?? 'data'}
+        onChange={(key) => setTab({ tab: key }, { replace: true, state: location.state })}
         items={[
           {
             key: 'data',
@@ -583,7 +588,11 @@ export function VehicleDetail() {
               />
             ),
           },
-          { key: 'rentals', label: 'Аренды', disabled: true },
+          {
+            key: 'rentals',
+            label: 'Аренды',
+            children: <RentalHistory source="vehicles" id={v.id} />,
+          },
           {
             key: 'maintenance',
             label: 'Обслуживание',

@@ -225,13 +225,14 @@ export const bookingCheckouts = pgTable(
     actSignedAt: time('act_signed_at'),
     actSignedBy: integer('act_signed_by').references(() => users.id),
     issuedAt: time('issued_at'),
+    returnStartedAt: time('return_started_at'),
+    returnStartedBy: integer('return_started_by').references(() => users.id),
+    returnedAt: time('returned_at'),
     issuedBy: integer('issued_by').references(() => users.id),
-    issuedVehicleId: integer('issued_vehicle_id')
-      .unique()
-      .references(() => vehicles.id),
+    issuedVehicleId: integer('issued_vehicle_id').references(() => vehicles.id),
     issuedContractId: integer('issued_contract_id').references(() => contractVersions.id),
   },
-  () => [
+  (t) => [
     check(
       'checkout_act_signature',
       sql`num_nonnulls(act_revision_id,act_signed_at,act_signed_by) IN (0,3)`,
@@ -241,5 +242,39 @@ export const bookingCheckouts = pgTable(
       sql`num_nonnulls(issued_at,issued_by,issued_vehicle_id,issued_contract_id) IN (0,4)`,
     ),
     check('checkout_stop_before_issue', sql`stopped_at IS NULL OR issued_at IS NULL`),
+    check(
+      'return_start_pair',
+      sql`num_nonnulls(return_started_at,return_started_by) IN (0,2) AND (return_started_at IS NULL OR issued_at IS NOT NULL)`,
+    ),
+    check(
+      'checkout_return_after_issue',
+      sql`returned_at IS NULL OR (issued_at IS NOT NULL AND returned_at >= issued_at)`,
+    ),
+    uniqueIndex('one_open_vehicle_usage')
+      .on(t.issuedVehicleId)
+      .where(sql`returned_at IS NULL AND issued_vehicle_id IS NOT NULL`),
+  ],
+);
+
+export const rentalReturnRevisions = pgTable(
+  'rental_return_revisions',
+  {
+    bookingId: integer('booking_id')
+      .notNull()
+      .references(() => bookingCheckouts.bookingId),
+    revision: integer('revision').notNull(),
+    actorId: integer('actor_id')
+      .notNull()
+      .references(() => users.id),
+    createdAt: time('created_at')
+      .notNull()
+      .default(sql`clock_timestamp()`),
+    inspection: jsonb('inspection').notNull(),
+    calculation: jsonb('calculation'),
+    reason: text('reason'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.bookingId, t.revision] }),
+    check('rental_return_revision_positive', sql`revision > 0`),
   ],
 );

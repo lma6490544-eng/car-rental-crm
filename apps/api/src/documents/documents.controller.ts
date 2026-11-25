@@ -15,6 +15,13 @@ import { BinaryUpload } from '../platform/http';
 import { AuthRequest, fail, idSchema, parse } from '../platform/security';
 import { ActsService } from './acts.service';
 import { CheckoutService } from './checkout.service';
+import { RentalReturnService } from './rental-return.service';
+import {
+  returnCorrection,
+  returnDamage,
+  returnInspection,
+  returnReview,
+} from './rental-return.dto';
 import { ContractsService } from './contracts.service';
 import {
   actInput,
@@ -68,6 +75,7 @@ export class DocumentsController {
     private readonly contracts: ContractsService,
     private readonly files: PrivateFilesService,
     private readonly checkout: CheckoutService,
+    private readonly rentalReturn: RentalReturnService,
     private readonly acts: ActsService,
     private readonly print: DocumentPrintService,
   ) {}
@@ -75,6 +83,56 @@ export class DocumentsController {
   @Get('bookings/:id/documents')
   list(@Param('id') rawId: string) {
     return this.documents.get(parse(idSchema, rawId));
+  }
+
+  @Get('bookings/:id/return')
+  getReturn(@Param('id') id: string) {
+    return this.rentalReturn.get(parse(idSchema, id));
+  }
+
+  @Post('bookings/:id/return/start')
+  startReturn(@Req() request: AuthRequest, @Param('id') id: string) {
+    return this.rentalReturn.start(request, parse(idSchema, id));
+  }
+
+  @Get('customers/:id/rental-history')
+  customerRentalHistory(@Param('id') id: string) {
+    return this.rentalReturn.list('customers', parse(idSchema, id));
+  }
+
+  @Get('vehicles/:id/rental-history')
+  vehicleRentalHistory(@Param('id') id: string) {
+    return this.rentalReturn.list('vehicles', parse(idSchema, id));
+  }
+
+  @Post('bookings/:id/return/inspection')
+  saveReturn(@Req() r: AuthRequest, @Param('id') id: string, @Body() body: unknown) {
+    return this.rentalReturn.save(r, parse(idSchema, id), parse(returnInspection, body));
+  }
+
+  @Post('bookings/:id/return/review')
+  reviewReturn(@Req() r: AuthRequest, @Param('id') id: string, @Body() body: unknown) {
+    return this.rentalReturn.review(r, parse(idSchema, id), parse(returnReview, body), false);
+  }
+
+  @Post('bookings/:id/return/confirm')
+  confirmReturn(@Req() r: AuthRequest, @Param('id') id: string, @Body() body: unknown) {
+    return this.rentalReturn.review(r, parse(idSchema, id), parse(returnReview, body), true);
+  }
+
+  @Post('bookings/:id/return/correction-preview')
+  reviewCorrection(@Req() r: AuthRequest, @Param('id') id: string, @Body() body: unknown) {
+    return this.rentalReturn.correct(r, parse(idSchema, id), parse(returnCorrection, body), false);
+  }
+
+  @Post('bookings/:id/return/correct')
+  correctReturn(@Req() r: AuthRequest, @Param('id') id: string, @Body() body: unknown) {
+    return this.rentalReturn.correct(r, parse(idSchema, id), parse(returnCorrection, body), true);
+  }
+
+  @Post('bookings/:id/return/damage')
+  chargeReturnDamage(@Req() r: AuthRequest, @Param('id') id: string, @Body() body: unknown) {
+    return this.rentalReturn.chargeDamage(r, parse(idSchema, id), parse(returnDamage, body));
   }
 
   @Post('bookings/:id/checkout/start')

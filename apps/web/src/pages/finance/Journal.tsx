@@ -34,7 +34,9 @@ export function Journal({
           key: 'kind',
           render: (_, o) => (
             <>
-              {names[o.kind]}
+              {o.kind === 'to_credit' && o.allocations.some((a) => a.availableAt)
+                ? 'Резерв на штрафы'
+                : names[o.kind]}
               {o.reversal_of && <> №{o.reversal_of}</>}
               {o.reversedBy && <Tag>Компенсирована №{o.reversedBy}</Tag>}
               <div>{o.reason}</div>
@@ -49,7 +51,13 @@ export function Journal({
               {o.customer_id && <Link to={'/clients/' + o.customer_id}>{o.customer_name}</Link>}
               {o.booking_id && (
                 <div>
-                  <Link to={'/calendar?booking=' + o.booking_id}>Бронь №{o.booking_id}</Link>
+                  {o.rentalId ? (
+                    <Link to={'/rentals/' + o.rentalId} state={{ returnToPrevious: true }}>
+                      Аренда №{o.rentalId}
+                    </Link>
+                  ) : (
+                    <Link to={'/calendar?booking=' + o.booking_id}>Бронь №{o.booking_id}</Link>
+                  )}
                 </div>
               )}
             </>
@@ -73,7 +81,8 @@ export function Journal({
               {o.chargeRub && <div>Начисление: {rub(o.chargeRub)}</div>}
               {o.allocations.map((a, i: number) => (
                 <div key={'a' + i}>
-                  {bucketNames[a.bucket]} · источник №{a.lotId}: {rub(a.amountRub)}
+                  {a.availableAt ? 'Резерв на штрафы' : bucketNames[a.bucket]} · источник №{a.lotId}
+                  : {rub(a.amountRub)}
                 </div>
               ))}
             </>

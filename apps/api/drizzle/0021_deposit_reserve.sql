@@ -1,0 +1,2 @@
+ALTER TABLE "finance_allocations" ADD COLUMN "available_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "finance_allocations" ADD CONSTRAINT "finance_allocation_availability" CHECK (available_at IS NULL OR bucket='credit');

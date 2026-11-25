@@ -1,7 +1,8 @@
 import BookingForm from '../booking-form/BookingForm';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  App as AntApp,
   Badge,
   Button,
   ConfigProvider,
@@ -25,7 +26,9 @@ import {
   WarningOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { dateText, PollNotice } from '../../catalog';
+import { api, createIdempotencyKey, errorMessage } from '../../api';
 import { rub } from '../../shared/formatters';
 import { moscowDate } from '../../shared/moscowTime';
 import CalendarGrid from './CalendarGrid';
@@ -40,8 +43,11 @@ import { DAY } from './dates';
 import { useCalendarState } from './useCalendarState';
 import { useCalendarMove } from './useCalendarMove';
 import { AccountingEmailNotice } from './AccountingEmailNotice';
-import type { CommandResult } from '../../contracts';
+import type { CalendarPanel, CommandResult } from '../../contracts';
 export default function Calendar() {
+  const { rentalId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [bookingRevision, setBookingRevision] = useState(0);
   const [accountingEmailBookings, setAccountingEmailBookings] = useState<number[]>([]);
   const { moveRequest, movePreview, moveError, moveLoading, loadMove, closeMove } =
@@ -63,7 +69,7 @@ export default function Calendar() {
     to,
     dayWidth,
     collapsed,
-    panel,
+    panel: calendarPanel,
     setPanel,
     scroll,
     select,
@@ -74,6 +80,79 @@ export default function Calendar() {
     goToday,
     toggleGroup,
   } = useCalendarState();
+  const canonicalId = Number(rentalId);
+  const startingReturns = useRef(new Map<number, Promise<{ id: number }>>());
+  const latestSelection = useRef<symbol>(undefined);
+  useLayoutEffect(
+    () => () => {
+      latestSelection.current = undefined;
+    },
+    [calendarPanel, location.key],
+  );
+  const { message } = AntApp.useApp();
+  const step = new URLSearchParams(location.search).get('step');
+  const checkoutStep =
+    step === 'checkout' || (step !== 'return' && location.state?.rentalStep === 'contract');
+  const panel: CalendarPanel =
+    Number.isSafeInteger(canonicalId) && canonicalId > 0
+      ? {
+          kind: 'contract',
+          id: canonicalId,
+          action: checkoutStep ? undefined : 'complete',
+        }
+      : calendarPanel;
+  const openGridPanel = useCallback(
+    async (next: CalendarPanel) => {
+      const selection = Symbol();
+      latestSelection.current = selection;
+      if (next?.kind === 'contract' && next.action === 'complete') {
+        let request = startingReturns.current.get(next.id);
+        if (!request) {
+          request = api<{ id: number }>('/bookings/' + next.id + '/return/start', {
+            method: 'POST',
+            key: createIdempotencyKey(),
+          });
+          startingReturns.current.set(next.id, request);
+        }
+        try {
+          await request;
+        } catch (error) {
+          if (latestSelection.current === selection) void message.error(errorMessage(error));
+          return;
+        } finally {
+          if (startingReturns.current.get(next.id) === request)
+            startingReturns.current.delete(next.id);
+        }
+        if (latestSelection.current !== selection) return;
+      }
+      if (
+        next?.kind === 'contract' &&
+        (next.action === 'complete' ||
+          p.data?.events.some(
+            (event) =>
+              event.booking_id === next.id &&
+              (event.checkoutPhase === 'issued' || event.checkoutPhase === 'completed'),
+          ))
+      ) {
+        setPanel(null);
+        navigate('/rentals/' + next.id, {
+          state: {
+            returnToPrevious: true,
+            rentalStep:
+              next.action === 'complete' ||
+              p.data?.events.some(
+                (event) => event.booking_id === next.id && event.checkoutPhase === 'completed',
+              )
+                ? 'return'
+                : 'contract',
+          },
+        });
+        return;
+      }
+      setPanel(next);
+    },
+    [message, navigate, p.data, setPanel],
+  );
   const grid = useMemo(
     () => (
       <CalendarGrid
@@ -87,11 +166,22 @@ export default function Calendar() {
         from={from}
         to={to}
         dayWidth={dayWidth}
-        onSelect={setPanel}
+        onSelect={openGridPanel}
         onMove={(request) => void loadMove(request)}
       />
     ),
-    [groupBy, collapsed, vehicles, p.data, from, to, dayWidth, loadMove, setPanel, toggleGroup],
+    [
+      groupBy,
+      collapsed,
+      vehicles,
+      p.data,
+      from,
+      to,
+      dayWidth,
+      loadMove,
+      openGridPanel,
+      toggleGroup,
+    ],
   );
   const done = () => {
     void p.reload();
@@ -122,13 +212,19 @@ export default function Calendar() {
     },
     [reloadCalendar],
   );
+  const closeContract = () => {
+    if (rentalId) {
+      if (location.state?.returnToPrevious) navigate(-1);
+      else navigate('/calendar', { replace: true });
+    } else select(null);
+  };
   const closePanel = () => {
     if (locked) return;
     if (panel?.kind === 'contract' && checkoutExit.current) {
       checkoutExit.current.requestClose();
       return;
     }
-    select(null);
+    closeContract();
   };
   const cancelMove = () => {
     if (!locked) closeMove();
@@ -394,7 +490,9 @@ export default function Calendar() {
                     body: { padding: '20px 28px', minHeight: 0 },
                     footer: { padding: '16px 28px' },
                   }
-                : undefined
+                : panel?.kind === 'contract'
+                  ? { body: { marginBlock: 16, paddingBlock: 0, minHeight: 0 } }
+                  : undefined
             }
             closable={!locked}
             maskClosable={!locked}
@@ -462,7 +560,7 @@ export default function Calendar() {
                 key={panel.id + ':' + (panel.action ?? '') + ':' + bookingRevision}
                 id={panel.id}
                 action={panel.action}
-                checkoutPhase={contractPhase}
+                checkoutPhase={contractPhase === 'completed' ? undefined : contractPhase}
                 onDone={done}
                 onAccountingEmailRequested={watchAccountingEmail}
                 onMove={(request) => void loadMove(request)}
@@ -481,10 +579,16 @@ export default function Calendar() {
                 key={panel.id + ':' + (panel.action ?? '')}
                 id={panel.id}
                 autoStart={panel.action === 'start'}
-                startAtReturn={panel.action === 'complete'}
+                initialStep={
+                  panel.action === 'complete'
+                    ? 'return-act'
+                    : step === 'checkout'
+                      ? 'driver'
+                      : undefined
+                }
                 ref={checkoutExit}
                 onMove={(request) => void loadMove(request)}
-                onClose={() => select(null)}
+                onClose={closeContract}
                 onLock={setLocked}
                 onChanged={done}
               />

@@ -1,5 +1,6 @@
 import type { FinanceResponse } from '../../contracts';
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Alert, Button, Card, Form, Select, Space } from 'antd';
 import { PollNotice, usePolling } from '../../catalog';
 import { fundNames } from './presentation';
@@ -12,8 +13,13 @@ export { rub } from '../../shared/formatters';
 export { ClientFinance } from './ClientFinance';
 export { FinancialSummary } from './FinancialSummary';
 export default function Payments() {
+  const [params] = useSearchParams();
+  const initialCustomer = Number(params.get('customerId'));
+  const initialBooking = Number(params.get('bookingId'));
   const p = usePolling<FinanceResponse>('/finance'),
-    [customer, setCustomer] = useState<number>(),
+    [customer, setCustomer] = useState<number | undefined>(
+      Number.isSafeInteger(initialCustomer) && initialCustomer > 0 ? initialCustomer : undefined,
+    ),
     [initial, setInitial] = useState(false),
     [locked, setLocked] = useState(false),
     [reversal, setReversal] = useState<number>();
@@ -84,7 +90,20 @@ export default function Payments() {
           />
         </Form.Item>
       </Form>
-      {customer && <ClientFinance key={customer} customerId={customer} onLock={setLocked} />}
+      {customer && (
+        <ClientFinance
+          key={customer}
+          customerId={customer}
+          bookingId={
+            customer === initialCustomer &&
+            Number.isSafeInteger(initialBooking) &&
+            initialBooking > 0
+              ? initialBooking
+              : undefined
+          }
+          onLock={setLocked}
+        />
+      )}
       {reversal && (
         <MoneyEditor
           initialKind="reversal"

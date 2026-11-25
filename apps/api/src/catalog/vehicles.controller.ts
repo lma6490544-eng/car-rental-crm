@@ -31,7 +31,7 @@ export class VehiclesController {
   private async assertNoActiveBookings(client: PoolClient, vehicleId: number) {
     if (await checkoutAvailable(client)) {
       const issued = await client.query(
-        'SELECT booking_id FROM booking_checkouts WHERE issued_vehicle_id=$1',
+        "SELECT booking_id FROM booking_checkouts x WHERE issued_vehicle_id=$1 AND to_jsonb(x)->>'returned_at' IS NULL",
         [vehicleId],
       );
       if (issued.rowCount) fail(409, 'VEHICLE_ALREADY_ISSUED', 'Автомобиль выдан клиенту.');
@@ -282,6 +282,7 @@ export class VehiclesController {
           performedOn: d.performedOn,
           mileageKm: d.mileageKm,
           note: d.note,
+          updateMileage: d.updateMileage,
           mileageChange:
             d.updateMileage && old.current_mileage_km !== d.mileageKm
               ? { before: old.current_mileage_km, after: d.mileageKm }

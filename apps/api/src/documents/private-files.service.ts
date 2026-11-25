@@ -22,7 +22,10 @@ export type FileSummary = {
   deleteAfter: Date | null;
 };
 const fileSummary = `id,mime,size,
-  CASE WHEN status<>'deleted' AND delete_after<=clock_timestamp() THEN 'expired' ELSE status END AS status,
+  CASE WHEN status<>'deleted' AND delete_after<=clock_timestamp() THEN 'expired'
+       WHEN deleted_at IS NOT NULL AND EXISTS (
+         SELECT 1 FROM outbox_jobs j WHERE j.business_key='retire-photo:'||private_files.id AND j.status<>'done'
+       ) THEN 'expired' ELSE status END AS status,
   created_at AS "createdAt",delete_after AS "deleteAfter"`;
 
 @Injectable()
@@ -78,10 +81,32 @@ export class PrivateFilesService {
         'files.upload',
         { owner, mime, digest },
         async (c) => {
+          const checkIn = 'bookingId' in owner && owner.kind === 'check_in';
           const booking =
-            'bookingId' in owner
+            'bookingId' in owner && !checkIn
               ? await lockBooking(c, owner.bookingId, owner.expectedBookingVersion)
               : null;
+          let returned:
+            { vehicleId: number; deleteAfter: Date | null; expired: boolean } | undefined;
+          if (checkIn) {
+            await c.query("SELECT pg_advisory_xact_lock(hashtextextended('crm:schedule',0))");
+            const result = await c.query<{
+              vehicleId: number;
+              deleteAfter: Date | null;
+              expired: boolean;
+            }>(
+              `SELECT x.issued_vehicle_id AS "vehicleId",
+               (to_jsonb(x)->>'returned_at')::timestamptz+interval '720 hours' AS "deleteAfter",
+               coalesce((to_jsonb(x)->>'returned_at')::timestamptz+interval '720 hours'<=clock_timestamp(),false) AS expired
+               FROM bookings b JOIN booking_checkouts x ON b.id=x.booking_id
+               WHERE b.id=$1 AND b.version=$2 AND x.issued_at IS NOT NULL FOR UPDATE OF b`,
+              [owner.bookingId, owner.expectedBookingVersion],
+            );
+            returned = result.rows[0];
+            if (!returned)
+              fail(409, 'RETURN_CHANGED', 'Откройте актуальную карточку выданной аренды.');
+            if (returned.expired) fail(410, 'FILE_EXPIRED', 'Срок хранения фотографий уже истёк.');
+          }
           if ('customerId' in owner) await this.customer(c, owner.customerId, true);
           const bookingId = 'bookingId' in owner ? owner.bookingId : null;
           const customerId = 'customerId' in owner ? owner.customerId : null;
@@ -95,8 +120,8 @@ export class PrivateFilesService {
           if (count >= (photo ? 500 : 50))
             fail(422, 'FILE_LIMIT', 'Достигнут предел числа файлов.');
           await c.query(
-            `INSERT INTO private_files(id,booking_id,customer_id,category,mime,size,checksum,created_by,inspection_kind,vehicle_id)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            `INSERT INTO private_files(id,booking_id,customer_id,category,mime,size,checksum,created_by,inspection_kind,vehicle_id,delete_after)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
             [
               id,
               bookingId,
@@ -107,7 +132,8 @@ export class PrivateFilesService {
               digest,
               request.auth!.user.id,
               'kind' in owner ? owner.kind : null,
-              booking?.vehicleId ?? null,
+              returned?.vehicleId ?? booking?.vehicleId ?? null,
+              returned?.deleteAfter ?? null,
             ],
           );
           await c.query(
@@ -118,7 +144,7 @@ export class PrivateFilesService {
             c,
             request.auth!.user.id,
             photo ? 'booking' : 'customer',
-            'files.uploaded',
+            returned?.deleteAfter ? 'rentalReturn.photoAdded' : 'files.uploaded',
             bookingId ?? customerId,
             request.requestId,
             { id, category },
