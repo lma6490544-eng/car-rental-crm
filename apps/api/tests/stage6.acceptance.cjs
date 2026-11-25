@@ -826,7 +826,16 @@ test(
       code: 'CHECKOUT_STOP_CONFIRMATION_REQUIRED',
     });
     await stopButton.click();
+    const stopResponse = page.waitForResponse(
+      (r) => r.url().endsWith('/checkout/stop') && r.request().method() === 'POST' && r.ok(),
+    );
     await stopDialog.getByRole('button', { name: 'Прекратить оформление', exact: true }).click();
+    const stopped = await stopResponse;
+    const stopKey = await stopped.request().headerValue('idempotency-key');
+    assert.deepEqual(
+      (await call('/operations/by-key?command=checkout.stop&key=' + stopKey)).result,
+      await stopped.json(),
+    );
     await freshDrawer.waitFor({ state: 'hidden' });
     assert.equal((await call(freshPath + '/documents')).checkout, null);
     assert.equal(
@@ -855,7 +864,7 @@ test(
       true,
     );
     assert.equal(await startedEvent.getByText('Оформление', { exact: true }).count(), 0);
-    await startedEvent.locator('.calendar-event-tooltip').hover();
+    await startedEvent.locator('.calendar-event-content').hover();
     await page
       .getByRole('tooltip')
       .locator('.ant-tag')
@@ -1473,13 +1482,17 @@ test(
     const termsFields = contractCard.locator('.contract-terms-fields');
     const financeFields = contractCard.locator('.contract-edit-finance');
     const assertFieldRows = async (locator, expected) => {
-      const layout = await locator.evaluate((fields) => ({
-        rows: new Set(Array.from(fields.children, (field) => field.getBoundingClientRect().top))
-          .size,
-        width: fields.clientWidth,
-        scrollWidth: fields.scrollWidth,
-        columns: getComputedStyle(fields).gridTemplateColumns,
-      }));
+      let layout;
+      await waitUntil(async () => {
+        layout = await locator.evaluate((fields) => ({
+          rows: new Set(Array.from(fields.children, (field) => field.getBoundingClientRect().top))
+            .size,
+          width: fields.clientWidth,
+          scrollWidth: fields.scrollWidth,
+          columns: getComputedStyle(fields).gridTemplateColumns,
+        }));
+        return layout.rows === expected;
+      }, 'contract fields reflow for the viewport');
       assert.equal(layout.rows, expected, JSON.stringify(layout));
       assert.equal(layout.scrollWidth, layout.width, JSON.stringify(layout));
     };

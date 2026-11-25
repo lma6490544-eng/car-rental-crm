@@ -130,12 +130,13 @@ test(
       assert.equal(new URL(page.url()).searchParams.get('type'), 'individual');
       await page.getByTitle('2', { exact: true }).click();
       await page.waitForURL((url) => url.searchParams.get('page') === '2');
+      await page.locator('.ant-pagination-item-active').getByText('2', { exact: true }).waitFor();
       assert.equal(new URL(page.url()).searchParams.get('page'), '2');
       const listUrl = page.url();
       await page.getByRole('link', { name: client.displayName, exact: true }).click();
       await page.getByRole('heading', { name: client.displayName, exact: true }).waitFor();
       await page.getByRole('link', { name: '← К списку клиентов' }).click();
-      assert.equal(page.url(), listUrl);
+      await page.waitForURL(listUrl);
 
       await page.getByRole('button', { name: 'Добавить клиента', exact: true }).click();
       let dialog = page.getByRole('dialog');
@@ -157,21 +158,29 @@ test(
 
       await page.getByRole('button', { name: 'Редактировать', exact: true }).click();
       dialog = page.getByRole('dialog');
-      await dialog.getByLabel('ФИО', { exact: true }).fill('Мой ввод');
+      const lastName = dialog.getByLabel('Фамилия', { exact: true });
+      const firstName = dialog.getByLabel('Имя', { exact: true });
+      assert.equal(await lastName.inputValue(), 'Петров');
+      assert.equal(await firstName.inputValue(), 'Пётр');
+      await lastName.fill('Сидоров');
+      await firstName.fill('Сергей');
       client = { ...client, displayName: 'Изменено другим сотрудником', version: 2 };
       await page
         .getByText('Запись изменена другим сотрудником. Ваш ввод сохранён.', { exact: true })
         .waitFor();
-      assert.equal(await dialog.getByLabel('ФИО', { exact: true }).inputValue(), 'Мой ввод');
+      assert.equal(await lastName.inputValue(), 'Сидоров');
+      assert.equal(await firstName.inputValue(), 'Сергей');
       assert.ok(await dialog.getByRole('button', { name: 'Сохранить', exact: true }).isDisabled());
       await dialog
         .getByRole('button', { name: 'Сохранить мой ввод поверх новой версии', exact: true })
         .click();
       await dialog.getByRole('button', { name: 'Сохранить', exact: true }).click();
-      await page.getByRole('heading', { name: 'Мой ввод', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'Сидоров Сергей', exact: true }).waitFor();
       assert.equal(commands.at(-1).method, 'PATCH');
       assert.equal(commands.at(-1).body.expectedVersion, 2);
-      assert.equal(commands.at(-1).body.data.displayName, 'Мой ввод');
+      assert.equal(commands.at(-1).body.data.displayName, 'Сидоров Сергей');
+      assert.equal(commands.at(-1).body.data.details.lastName, 'Сидоров');
+      assert.equal(commands.at(-1).body.data.details.firstName, 'Сергей');
 
       await page.getByRole('tab', { name: 'Заметки', exact: true }).click();
       await page.getByRole('button', { name: 'Добавить заметку', exact: true }).click();

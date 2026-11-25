@@ -6,7 +6,7 @@ import { useBookingCustomer } from './useBookingCustomer';
 import { buildBookingDraft, clean } from './bookingDraft';
 import { useBookingPreview } from './useBookingPreview';
 import type { BookingOptions, CommandResult } from '../../contracts';
-import { useEffect, useImperativeHandle, useState } from 'react';
+import { useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ComponentType, ReactNode, Ref } from 'react';
 import {
@@ -59,12 +59,14 @@ function RentalDateInput({
   value?: string;
   onChange?: (value: string) => void;
 }) {
+  // Keep the picker's pending selection when the booking preview updates the form.
+  const date = useMemo(() => (value ? dayjs(value) : null), [value]);
   return (
     <DatePicker
       aria-label="Начало аренды"
       showTime={{ format: 'HH:mm' }}
       format="DD.MM.YYYY, HH:mm"
-      value={value ? dayjs(value) : null}
+      value={date}
       onChange={(v) => onChange?.(v ? v.format('YYYY-MM-DDTHH:mm') : '')}
     />
   );
@@ -76,13 +78,22 @@ export type BookingTermsForm = {
 
 type BookingFormAction =
   | {
+      mode: 'booking';
+      initial?: BookingInitial;
       Action: ComponentType<ActionProps>;
       onDone: (result: CommandResult) => void;
       termsRef?: never;
     }
-  | { termsRef: Ref<BookingTermsForm>; Action?: never; onDone?: never };
+  | {
+      mode: 'terms';
+      initial: BookingInitial;
+      termsRef: Ref<BookingTermsForm>;
+      Action?: never;
+      onDone?: never;
+    };
 
 export default function BookingForm({
+  mode,
   initial,
   onDone,
   Action,
@@ -93,7 +104,6 @@ export default function BookingForm({
   contractDeposit,
   disabled = false,
 }: {
-  initial?: BookingInitial;
   footerContainer?: HTMLElement | null;
   onTermsDirtyChange?: (dirty: boolean) => void;
   onTermsReadyChange?: (ready: boolean) => void;
@@ -105,7 +115,7 @@ export default function BookingForm({
   const [fieldsValid, setFieldsValid] = useState(false);
   const [form] = Form.useForm<BookingFormValues>(),
     values: BookingFormValues = Form.useWatch([], form) ?? {};
-  const termsOnly = !!initial?.termsOnly;
+  const termsOnly = mode === 'terms';
   const options = usePolling<BookingOptions>(termsOnly ? undefined : '/booking-options');
   const customer = useBookingCustomer(form, termsOnly ? undefined : initial?.customerId);
   const {
@@ -209,7 +219,7 @@ export default function BookingForm({
         : null,
   });
   const { target, scheduleKey, draft, draftKey, discountValid, loyalty, requiresVehicle } =
-    buildBookingDraft(values, advanced, options.data, selected, selecting, initial);
+    buildBookingDraft(values, advanced, options.data, selected, selecting, initial, mode);
   const {
     preview,
     calculating,
@@ -235,6 +245,7 @@ export default function BookingForm({
       draft!.pricing,
       manual,
       initial,
+      mode,
     );
   };
   const hasStoredDetails =

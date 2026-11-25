@@ -153,7 +153,8 @@ module.exports = async function preparationRegression({
   const checked = await rpc('preparation-cases', { inputs, solverTracePath });
   assert.ok(!checked.error, checked.error);
   assert.equal(checked.cases, inputs.length);
-  assert.equal(checked.solverCalls, inputs.length * 2);
+  assert.equal(checked.solverCalls, inputs.length);
+  assert.equal(checked.ordinaryCalls, inputs.length);
   for (const value of checked.results) {
     const expected = inputs.find((v) => v.name === value.name).expectedStatus;
     if (expected) assert.equal(value.status, expected, value.name);

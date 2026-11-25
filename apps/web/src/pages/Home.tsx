@@ -1,11 +1,14 @@
 import { Button, Card, Space, Tag, Typography } from 'antd';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth';
+import { PageTitle } from '../shared/PageTitle';
 export default function Home() {
   const { user } = useAuth();
   return (
     <section>
-      <Typography.Title level={2}>Рабочее пространство</Typography.Title>
+      <PageTitle>
+        <Typography.Title level={2}>Рабочее пространство</Typography.Title>
+      </PageTitle>
       <Typography.Paragraph type="secondary">
         Вы вошли в CRM проката автомобилей.
       </Typography.Paragraph>

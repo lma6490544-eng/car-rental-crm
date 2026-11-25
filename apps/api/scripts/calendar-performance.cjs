@@ -424,6 +424,7 @@ async function runCalendarProfile({
       if (comparePreparation) {
         const before = await request('before-preparation', false, false, true, {
           mode: 'record',
+          primaryFromPairs: true,
           path: solverTracePath,
         });
         const after = await request('current', false, false, true, {
@@ -437,11 +438,11 @@ async function runCalendarProfile({
         );
         assert.deepEqual(
           normalize(after.evaluations),
-          normalize(before.evaluations),
-          'both complete evaluation contexts and signatures',
+          normalize(before.evaluations.filter((_, i) => i % 2 === 0)),
+          'primary evaluation inputs, results and signatures',
         );
-        assert.equal(after.solverTrace.calls, before.solverCalls);
-        assert.equal(before.solverTrace.calls, before.solverCalls);
+        assert.equal(after.solverTrace.calls, after.data.bookings.length);
+        assert.equal(before.solverTrace.calls * 2, before.solverCalls);
         console.log(
           'complete solver input/result equivalence passed:',
           scale.name,
@@ -476,7 +477,7 @@ async function runCalendarProfile({
         assert.deepEqual(
           normalize(current.evaluations),
           normalize(beforeSummary.evaluations),
-          'both contexts and HMAC before 5.3',
+          'primary evaluation and HMAC before 5.3',
         );
         const ids = current.data.bookings.map((b) => b.id);
         const summaries = await rpc('summaries', ids);
@@ -501,12 +502,12 @@ async function runCalendarProfile({
           normalize(beforeLabels.data),
           'full response including order, labels, reasons, projections and HMAC must match before stage 5.2',
         );
-        assert.equal(current.solverCalls, beforeLabels.solverCalls);
+        assert.equal(current.solverCalls * 2, beforeLabels.solverCalls);
         assert.equal(current.evaluations.length, current.solverCalls);
         assert.deepEqual(
           normalize(current.evaluations),
-          normalize(beforeLabels.evaluations),
-          'both complete evaluate contexts, including replacement-pool HMAC, must match',
+          normalize(beforeLabels.evaluations.filter((_, i) => i % 2 === 0)),
+          'primary evaluations and HMAC must match',
         );
         console.log('before-labels equivalence passed:', scale.name);
       }

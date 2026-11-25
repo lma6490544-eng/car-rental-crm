@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Alert, Button, Card, Col, Form, Pagination, Row, Space, Table, Typography } from 'antd';
 import { dateText, PollNotice, usePolling } from '../../catalog';
+import { PageTitle } from '../../shared/PageTitle';
 import type { Catalog, History, PricingFormValues } from './types';
 import { names, rub } from './presentation';
 import { usePricingQuote } from './usePricingQuote';
@@ -15,7 +16,9 @@ export default function Pricing() {
   const { error, uncertain, busy, recover, send, load } = pricing;
   return (
     <section>
-      <Typography.Title level={2}>Расчёт цены</Typography.Title>
+      <PageTitle>
+        <Typography.Title level={2}>Расчёт цены</Typography.Title>
+      </PageTitle>
       <Typography.Paragraph>
         Предварительная стоимость и объяснение условий. Подтверждение сохраняет расчёт; бронь и
         движение денег оформляются на следующих этапах.

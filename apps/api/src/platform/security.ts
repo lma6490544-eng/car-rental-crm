@@ -38,11 +38,16 @@ export const loginField = z
     /^[a-z0-9][a-z0-9._-]{2,63}$/,
     'Логин: 3–64 латинских символа, цифры, точка, дефис или подчёркивание.',
   );
+export const MIN_PASSWORD_LENGTH = 8;
+
 export const newUserSchema = z
   .object({
     fullName: z.string().trim().min(1, 'Укажите ФИО.').max(120),
     login: loginField,
-    password: z.string().min(12, 'Пароль должен содержать не менее 12 символов.').max(128),
+    password: z
+      .string()
+      .min(MIN_PASSWORD_LENGTH, `Пароль должен содержать не менее ${MIN_PASSWORD_LENGTH} символов.`)
+      .max(128),
   })
   .strict();
 export const statusSchema = z

@@ -317,6 +317,7 @@ export default function Booking({
       )}
       {edit && (
         <BookingForm
+          mode="booking"
           Action={Action}
           initial={{
             bookingId: id,

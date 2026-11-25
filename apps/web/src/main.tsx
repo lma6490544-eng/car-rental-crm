@@ -11,7 +11,7 @@ import './style.css';
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
-      <AntApp>
+      <AntApp className="app-frame">
         <BrowserRouter>
           <AuthProvider>
             <App />

@@ -85,8 +85,21 @@ export function useCalendarState() {
   }, [locationKey, panel]);
   useLayoutEffect(() => {
     if (!scroll.current) return;
+    const grid = scroll.current;
+    const updateViewportWidth = () => {
+      grid.style.setProperty('--calendar-viewport-width', `${grid.clientWidth}px`);
+    };
+    updateViewportWidth();
+    const observer = new ResizeObserver(updateViewportWidth);
+    observer.observe(grid);
+    return () => observer.disconnect();
+  }, []);
+  useLayoutEffect(() => {
+    const grid = scroll.current;
+    if (!grid) return;
     restoring.current = true;
-    scroll.current.scrollLeft = savedScroll ?? PAST_DAYS * dayWidth;
+    grid.scrollLeft = savedScroll ?? PAST_DAYS * dayWidth;
+    grid.style.setProperty('--calendar-scroll-left', `${grid.scrollLeft}px`);
     const frame = requestAnimationFrame(() => {
       restoring.current = false;
     });
@@ -137,8 +150,9 @@ export function useCalendarState() {
     change('date', moscowDate(selectedDate + direction * 15 * DAY), true);
   };
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
-    if (calendarLoading || restoring.current || shifting.current) return;
     const el = e.currentTarget;
+    el.style.setProperty('--calendar-scroll-left', `${el.scrollLeft}px`);
+    if (calendarLoading || restoring.current || shifting.current) return;
     savedScroll = el.scrollLeft;
     const buffer = 2 * dayWidth;
     if (el.scrollLeft < buffer) shiftWindow(-1);

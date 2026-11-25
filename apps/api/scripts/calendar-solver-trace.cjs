@@ -34,17 +34,19 @@ module.exports = {
       path: filename,
       fd: fs.openSync(filename, config.mode === 'record' ? 'w' : 'r'),
       count: 0,
+      observed: 0,
       pending: '',
       buffer: Buffer.alloc(65536),
     };
   },
   before(args) {
-    return trace
-      ? JSON.stringify({ demands: args[0], rootId: args[1], maxSteps: args[2] ?? 100000 })
-      : undefined;
+    if (!trace) return;
+    // Historical inspectors ran one extra solver for alternatives after each primary call.
+    if (trace.primaryFromPairs && trace.observed++ % 2 === 1) return;
+    return JSON.stringify({ demands: args[0], rootId: args[1], maxSteps: args[2] ?? 100000 });
   },
   after(input, result) {
-    if (!trace) return;
+    if (input === undefined) return;
     const value = '{"input":' + input + ',"result":' + JSON.stringify(result) + '}';
     if (trace.mode === 'record') fs.writeFileSync(trace.fd, value + '\n');
     else assert.equal(line(), value, 'complete ordered solver input/result at call ' + trace.count);
@@ -52,6 +54,8 @@ module.exports = {
   },
   finish() {
     if (!trace) return undefined;
+    if (trace.primaryFromPairs)
+      assert.equal(trace.observed, trace.count * 2, 'complete historical evaluation pairs');
     if (trace.mode === 'compare') assert.equal(line(), undefined, 'no missing solver calls');
     fs.closeSync(trace.fd);
     const result = { mode: trace.mode, calls: trace.count };

@@ -1,6 +1,6 @@
 import type { Customer } from '../../catalog';
 import type { BookingPreview } from '../../contracts';
-import type { BookingFormValues, BookingInitial } from './types';
+import type { BookingFormMode, BookingFormValues, BookingInitial } from './types';
 import { clean, type buildBookingDraft } from './bookingDraft';
 type Draft = ReturnType<typeof buildBookingDraft>;
 export function buildBookingCommand(
@@ -11,6 +11,7 @@ export function buildBookingCommand(
   pricing: NonNullable<Draft['draft']>['pricing'],
   manual: boolean,
   initial?: BookingInitial,
+  mode: BookingFormMode = 'booking',
 ) {
   const details = v.details ?? {};
   const data = {
@@ -36,8 +37,8 @@ export function buildBookingCommand(
     reason:
       clean(v.unassignedReason) ||
       (initial?.bookingId ? 'Редактирование условий брони' : 'Создание брони'),
-    ...(initial?.termsOnly
-      ? initial.vehicleId && target?.type !== 'vehicle'
+    ...(mode === 'terms'
+      ? initial?.vehicleId && target?.type !== 'vehicle'
         ? { vehicleId: initial.vehicleId }
         : {}
       : {

@@ -37,6 +37,32 @@ test('pricing preserves Moscow time, editing exclusion and integer basis points'
   });
 });
 
+test('contract terms use the assigned vehicle and omit the customer from the command', () => {
+  const initial = { bookingId: 8, version: 3, target: 'brand:2', vehicleId: 7 };
+  const form = { start: values.start, days: 2, package: 250 };
+  const result = buildBookingDraft(form, false, undefined, undefined, false, initial, 'terms');
+  const preview = {
+    previewToken: 'current',
+    availability: { status: 'feasible' },
+    calculation: { overridesToConfirm: [] },
+  };
+  assert.deepEqual(result.target, { type: 'brand', id: 2 });
+  assert.equal(result.draft.vehicleId, 7);
+  const command = buildBookingCommand(
+    form,
+    undefined,
+    preview,
+    result.target,
+    result.draft.pricing,
+    false,
+    initial,
+    'terms',
+  );
+  assert.equal(command.vehicleId, 7);
+  assert.equal(command.expectedVersion, 3);
+  assert.equal('customer' in command, false);
+});
+
 test('invalid discounts and incomplete customer selection cannot produce a preview', () => {
   for (const discount of ['100.01', '-1', '1.234']) {
     assert.equal(build({ discountMode: 'percent', discount, loyaltyReason: 'Акция' }).draftKey, '');

@@ -71,6 +71,23 @@ function availabilityPool(
       (!booking.target_vehicle_id || v.id === booking.target_vehicle_id),
   );
 }
+function freeDuring(
+  facts: AvailabilityFacts,
+  vehicleId: number,
+  interval: AvailabilityInterval,
+  rootId: number | undefined,
+  bookingId: number,
+) {
+  return !(facts.blocksByVehicle.get(vehicleId) ?? []).some(
+    (block) =>
+      block.booking_id !== rootId &&
+      block.booking_id !== bookingId &&
+      overlaps(
+        interval,
+        facts.preparation?.blockIntervals.get(block.id) ?? availabilityInterval(block),
+      ),
+  );
+}
 export type AvailabilityFacts = {
   readonly vehicles: readonly AvailabilityVehicle[];
   readonly blocks: readonly AvailabilityBlock[];
@@ -243,7 +260,8 @@ export class SchedulingService {
     facts?: AvailabilityFacts,
     data?: CalendarInspectionData,
   ) {
-    const availability = await this.evaluate(c, input, facts);
+    const loaded = facts ?? (await this.loadAvailabilityFacts(c, input.id ?? 0));
+    const availability = await this.evaluate(c, input, loaded);
     let conflicts = input.vehicleId
       ? await this.conflicts(c, input.vehicleId, input.startAt, input.endAt, input.id)
       : [];
@@ -269,16 +287,10 @@ export class SchedulingService {
       conflicts.push(...unassigned);
     }
     const vehicles = await this.inspectionVehicles(c, input.models, data?.labels);
-    const pool = await this.evaluate(
-      c,
-      {
-        ...input,
-        target: { type: 'model', id: input.models[0] },
-        vehicleId: null,
-      },
-      facts,
+    const interval = { start: Date.parse(input.startAt), end: Date.parse(input.endAt) };
+    const alternatives = vehicles.filter(
+      (v) => v.isReady && freeDuring(loaded, v.id, interval, input.id, input.id ?? 0),
     );
-    const alternatives = vehicles.filter((v) => pool.candidates.includes(v.id));
     const assigned = vehicles.find((v) => v.id === input.vehicleId);
     const problemReasons: string[] = [];
     if (assigned && !assigned.isReady)
@@ -420,21 +432,7 @@ export class SchedulingService {
         ...interval,
         pool: pool.map((v) => v.id),
         candidates: pool
-          .filter(
-            (v) =>
-              v.is_ready &&
-              // The shared index includes the root booking's old assignment; ignore it here.
-              !(loaded.blocksByVehicle.get(v.id) ?? []).some(
-                (x) =>
-                  x.booking_id !== input.id &&
-                  x.booking_id !== b.id &&
-                  x.vehicle_id === v.id &&
-                  overlaps(
-                    interval,
-                    loaded.preparation?.blockIntervals.get(x.id) ?? availabilityInterval(x),
-                  ),
-              ),
-          )
+          .filter((v) => v.is_ready && freeDuring(loaded, v.id, interval, input.id, b.id))
           .map((v) => v.id),
       };
     });

@@ -11,7 +11,6 @@
   --muted: #9baabd;
   --accent: #e8c477;
   --on-accent: #0b1724;
-  --nav-selected: #3b392f;
   --surface-hover: #24374a;
   --weekend-bg: #172636;
   --cell-hover: #29435a99;
@@ -28,7 +27,21 @@
   --scrollbar: #465c70;
   --danger-text: #f07869;
   --danger-border: #a93c47;
+  --calendar-booking-debt-badge-bg: #9d393c;
+  --calendar-booking-debt-badge-text: #fff;
   --info: #71b9de;
+  --primary-button-gradient: linear-gradient(180deg, #2170dd 0%, #155bc3 100%);
+  --primary-button-hover-gradient: linear-gradient(180deg, #2371e0 0%, #1761cc 100%);
+  --primary-button-active-gradient: linear-gradient(180deg, #1b64cb 0%, #124fab 100%);
+  --primary-button-text: #fff;
+}
+:root[data-theme='dark'] {
+  --app-background-gradient: radial-gradient(ellipse at top left, #142435 0%, #0b1520 100%);
+  --workspace-gradient: linear-gradient(180deg, #16283a 0%, #112131 100%);
+  --navigation-selected-gradient: linear-gradient(90deg, #38382f 0%, #212a30 100%);
+  --primary-button-focus: #87b7f8;
+  --calendar-booking-paid-gradient: linear-gradient(180deg, #b398e5 0%, #a587d4 100%);
+  --calendar-booking-unpaid-gradient: linear-gradient(180deg, #8bc5e6 0%, #79b5da 100%);
 }
 :root[data-theme='light'] {
   color-scheme: light;
@@ -43,7 +56,6 @@
   --muted: #64768a;
   --accent: #8d681f;
   --on-accent: #ffffff;
-  --nav-selected: #f5e9d1;
   --surface-hover: #e9eff5;
   --weekend-bg: #f1f4f8;
   --cell-hover: #dce8f299;
@@ -61,4 +73,10 @@
   --danger-text: #b53636;
   --danger-border: #c75e5e;
   --info: #217aa5;
+  --app-background-gradient: radial-gradient(ellipse at top left, #f7f9fc 0%, #eaf0f6 100%);
+  --workspace-gradient: linear-gradient(180deg, #fff 0%, #f7f9fc 100%);
+  --navigation-selected-gradient: linear-gradient(90deg, #fcf2dc 0%, #f7f3ea 100%);
+  --primary-button-focus: #155bc3;
+  --calendar-booking-paid-gradient: linear-gradient(180deg, #bda3ea 0%, #ac8ddd 100%);
+  --calendar-booking-unpaid-gradient: linear-gradient(180deg, #99cdec 0%, #81bbdf 100%);
 }

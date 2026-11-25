@@ -137,9 +137,25 @@ test('catalog polling, scroll, history and command contracts', { timeout: 120000
       window.dispatchEvent(new Event('online'));
     });
     assert.equal(requests.length, count + 1, 'refresh requests must not overlap');
+    await page.getByRole('button', { name: 'Reload data', exact: true }).click();
+    let releaseQueued;
+    gates.set(
+      '/api/v1/contract/a',
+      new Promise((resolve) => {
+        releaseQueued = resolve;
+      }),
+    );
+    assert.equal(await page.getByTestId('completed-reloads').textContent(), '0');
     const queuedRequest = page.waitForRequest((request) => request.url().endsWith('/contract/a'));
     releaseA();
     await queuedRequest;
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid=completed-reloads]').textContent === '1',
+    );
+    releaseQueued();
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid=completed-reloads]').textContent === '2',
+    );
     await page.waitForFunction(
       () => JSON.parse(document.querySelector('[data-testid=poll]').textContent).value === 'a',
     );

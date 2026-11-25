@@ -64,6 +64,11 @@ function Harness() {
 function Polling({ path, keep }: { path: string; keep: boolean }) {
   const poll = usePolling<{ value: string }>(path, keep);
   const originalReload = useRef(poll.reload);
+  const [completedReloads, setCompletedReloads] = useState(0);
+  async function reload() {
+    await poll.reload();
+    setCompletedReloads((count) => count + 1);
+  }
   return (
     <section>
       <output data-testid="poll">
@@ -74,7 +79,8 @@ function Polling({ path, keep }: { path: string; keep: boolean }) {
           stable: originalReload.current === poll.reload,
         })}
       </output>
-      <button onClick={() => void poll.reload()}>Reload data</button>
+      <output data-testid="completed-reloads">{completedReloads}</output>
+      <button onClick={() => void reload()}>Reload data</button>
       <PollNotice {...poll} />
     </section>
   );

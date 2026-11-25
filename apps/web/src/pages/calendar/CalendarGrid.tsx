@@ -6,9 +6,10 @@ import type {
   CalendarPanel,
   RentPaymentProgress,
 } from '../../contracts';
-import { useEffect, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
-import { Badge, Dropdown, Tag, Tooltip } from 'antd';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import { Badge, Dropdown, Tag } from 'antd';
+import { InputTooltip as Tooltip } from '../../shared/InputTooltip';
 import {
   CalendarOutlined,
   PhoneOutlined,
@@ -20,6 +21,7 @@ import { layoutCalendarEvents } from './calendar-layout';
 import { rub } from '../../shared/formatters';
 import { rentPaymentLabels } from './RentPaymentStatus';
 import CurrentTimeIndicator from './CurrentTimeIndicator';
+import CalendarEventTooltip from './CalendarEventTooltip';
 import {
   DAY_MS as DAY,
   moscowDateTimeInput,
@@ -39,6 +41,10 @@ const bookingStartLabel = (value: string | number) => {
   );
   return `${p.day}.${p.month} ${p.hour}:${p.minute}`;
 };
+const compactDebtNumber = new Intl.NumberFormat('ru-RU', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
 function progressLabel(phase: ScheduleEvent['checkoutPhase'], returnInProgress?: true) {
   if (returnInProgress) return 'Приёмка';
   if (phase === 'started') return 'Оформление';
@@ -49,28 +55,16 @@ function BookingBlock({
   phase,
   returnInProgress,
   accountingEmailUnsent,
-  invoicePayment,
 }: {
   name: string;
   start: string;
   phase?: ScheduleEvent['checkoutPhase'];
   returnInProgress?: true;
   accountingEmailUnsent?: true;
-  invoicePayment?: RentPaymentProgress;
 }) {
   const label = progressLabel(phase, returnInProgress);
   return (
     <span className="calendar-booking-content">
-      {invoicePayment && (
-        <span
-          className="calendar-rent-payment-icon"
-          data-status={invoicePayment.status}
-          role="img"
-          aria-label={rentPaymentLabels[invoicePayment.status]}
-        >
-          ₽
-        </span>
-      )}
       {accountingEmailUnsent && (
         <MailOutlined
           className="calendar-accounting-email-icon"
@@ -78,9 +72,66 @@ function BookingBlock({
         />
       )}
       {label && <Badge status="processing" role="img" aria-label={label} />}
-      <Tag className="calendar-booking-start">{bookingStartLabel(start)}</Tag>
+      <span className="calendar-booking-start-clip">
+        <Tag className="calendar-booking-start">{bookingStartLabel(start)}</Tag>
+      </span>
       <span className="calendar-booking-name">{name}</span>
     </span>
+  );
+}
+
+function CalendarEventContent({
+  children,
+  invoicePayment,
+  tooltip,
+}: {
+  children: ReactNode;
+  invoicePayment?: RentPaymentProgress;
+  tooltip?: ReactNode;
+}) {
+  const content = <span className="calendar-event-content">{children}</span>;
+  if (invoicePayment?.status !== 'unpaid' && invoicePayment?.status !== 'partial') {
+    return (
+      <span className="calendar-event-content-anchor">
+        {tooltip ? <CalendarEventTooltip title={tooltip}>{content}</CalendarEventTooltip> : content}
+      </span>
+    );
+  }
+
+  const amount = rub(invoicePayment.remainingRub);
+  const compactAmount =
+    compactDebtNumber.format(BigInt(invoicePayment.remainingRub)).replace(/\sтыс\.$/, 'к') + ' ₽';
+  const debtContent = (
+    <div className="calendar-booking-debt-region">
+      <Badge.Ribbon
+        rootClassName="calendar-booking-with-debt"
+        className="calendar-booking-debt-ribbon"
+        color="var(--calendar-booking-debt-badge-bg)"
+        text={
+          <>
+            <span className="calendar-booking-debt-amount">{amount}</span>
+            <span className="calendar-booking-debt-compact">{compactAmount}</span>
+          </>
+        }
+      >
+        <span className="calendar-booking-debt-details">
+          <span className="calendar-event-content-anchor">{content}</span>
+        </span>
+        <Badge
+          className="calendar-booking-debt-badge"
+          count="!"
+          size="small"
+          color="var(--calendar-booking-debt-badge-bg)"
+          role="img"
+          aria-label={`Осталось оплатить: ${amount}`}
+        />
+      </Badge.Ribbon>
+    </div>
+  );
+  return tooltip ? (
+    <CalendarEventTooltip title={tooltip}>{debtContent}</CalendarEventTooltip>
+  ) : (
+    debtContent
   );
 }
 const tooltipDate = new Intl.DateTimeFormat('ru-RU', {
@@ -150,7 +201,7 @@ function BookingTooltip({
         <div className="booking-tooltip-row">
           <span aria-hidden>₽</span>
           <span>
-            {rentPaymentLabels[b.invoicePayment.status]} · Осталось{' '}
+            {rentPaymentLabels[b.invoicePayment.status]} · Осталось оплатить:{' '}
             {rub(b.invoicePayment.remainingRub)}
           </span>
         </div>
@@ -164,11 +215,47 @@ function BookingTooltip({
     </div>
   );
 }
+const dayLabel = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow' });
+const dayNumber = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric' });
+const weekdayLabel = new Intl.DateTimeFormat('ru-RU', {
+  timeZone: 'Europe/Moscow',
+  weekday: 'short',
+});
+const monthLabel = new Intl.DateTimeFormat('ru-RU', {
+  timeZone: 'Europe/Moscow',
+  month: 'long',
+  year: 'numeric',
+});
+
+function calendarDates(from: number, to: number) {
+  const days = Array.from({ length: Math.ceil((to - from) / DAY) }, (_, index) => {
+    const at = from + index * DAY;
+    return {
+      at,
+      label: dayLabel.format(at),
+      number: dayNumber.format(at),
+      weekday: weekdayLabel.format(at),
+    };
+  });
+  const months: { label: string; days: number }[] = [];
+  for (const { at } of days) {
+    const value = monthLabel.format(at).replace(/\s*г\.$/, '');
+    const label = value[0].toUpperCase() + value.slice(1);
+    const last = months.at(-1);
+    if (last?.label === label) last.days++;
+    else months.push({ label, days: 1 });
+  }
+  return { days, months };
+}
+
+type PointerPosition = { x: number; y: number };
+
 type Drag = {
+  touch: boolean;
   bookingId: number;
   pointerId: number;
   source: HTMLElement;
-  startX: number;
+  startPointer: PointerPosition;
   startAt: number;
   endAt: number;
   vehicleId: number | null;
@@ -179,7 +266,7 @@ type Drag = {
   rows: Map<number, HTMLElement>;
   vehicles: Map<number, CalendarVehicle>;
   events: Map<number | null, { bookingId: number | null; start: number; end: number }[]>;
-  blockedByVehicle: Map<number, string>;
+  blockedByVehicle: Map<number, boolean>;
   availabilityStart: number | null;
 };
 type Props = {
@@ -199,26 +286,23 @@ type Props = {
 function VehicleRow({
   vehicle: v,
   events,
+  dates,
   from,
-  to,
   dayWidth,
   onSelect,
   onDragStart,
   groupBy,
-}: Omit<Props, 'vehicles' | 'bookings' | 'unassignedBookings' | 'onMove'> & {
+}: Pick<Props, 'events' | 'from' | 'dayWidth' | 'onSelect' | 'groupBy'> & {
   vehicle: CalendarVehicle;
-  onDragStart: (id: number, x: number, pointerId: number, source: HTMLElement) => void;
+  dates: ReturnType<typeof calendarDates>['days'];
+  onDragStart: (id: number, event: ReactPointerEvent<HTMLButtonElement>) => void;
 }) {
-  const days = Math.ceil((to - from) / DAY);
+  const days = dates.length;
   const [day, setDay] = useState(0);
   const start = moscowDateTimeInput(from + day * DAY + 10 * 3600000);
   const openVehicle = () => onSelect({ kind: 'vehicle', id: v.id });
   const create = () => onSelect({ kind: 'create', vehicleId: v.id, start });
-  const layout = layoutCalendarEvents(
-    events.filter(
-      (s) => s.vehicle_id === v.id && Date.parse(s.start_at) < to && Date.parse(s.end_at) > from,
-    ),
-  );
+  const layout = useMemo(() => layoutCalendarEvents(events), [events]);
   return (
     <div className="calendar-row" style={{ height: 6 + layout.lanes * 38 }} data-vehicle-id={v.id}>
       <button
@@ -277,18 +361,12 @@ function VehicleRow({
           }}
         >
           <div className="calendar-cells">
-            {Array.from({ length: days }, (_, i) => (
+            {dates.map(({ label }, i) => (
               <button
                 key={i}
                 className="calendar-cell"
                 style={{ width: dayWidth }}
-                aria-label={
-                  v.plate +
-                  ' · ' +
-                  new Date(from + i * DAY).toLocaleDateString('ru-RU', {
-                    timeZone: 'Europe/Moscow',
-                  })
-                }
+                aria-label={v.plate + ' · ' + label}
                 onClick={() => setDay(i)}
                 onContextMenu={() => setDay(i)}
                 onDoubleClick={(e) => {
@@ -304,16 +382,21 @@ function VehicleRow({
           </div>
         </Dropdown>
         {layout.events.map((s) => {
-          const eventLeft = ((Date.parse(s.start_at) - from) / DAY) * dayWidth;
-          const eventRight = ((Date.parse(s.end_at) - from) / DAY) * dayWidth;
+          const eventLeft = ((s.start - from) / DAY) * dayWidth;
+          const eventRight = ((s.end - from) / DAY) * dayWidth;
           const left = Math.max(0, eventLeft);
           const right = Math.min(days * dayWidth, eventRight);
           const width = Math.max(4, right - left);
-          const position: CSSProperties & { '--event-paid-width'?: string } = {
-            left,
-            width,
+          const position: CSSProperties & {
+            '--event-left': string;
+            '--event-width': string;
+            '--event-paid-width'?: string;
+          } = {
+            '--event-left': `${left}px`,
+            '--event-width': `${width}px`,
             top: 5 + s.lane * 38,
           };
+          const conflicts = layout.conflicts.filter((conflict) => conflict.eventIds.includes(s.id));
           const activeRental = s.checkoutPhase === 'issued';
           let paymentClass = '';
           if (activeRental || s.checkoutPhase === 'completed') {
@@ -331,115 +414,118 @@ function VehicleRow({
             else onSelect({ kind: s.checkoutPhase ? 'contract' : 'booking', id: s.booking_id });
           };
           return (
-            <Dropdown
-              key={s.id}
-              trigger={['contextMenu']}
-              menu={{
-                items: [
-                  ...(activeRental ? [{ key: 'complete', label: 'Завершить аренду' }] : []),
-                  ...(!s.checkoutPhase
-                    ? [
-                        {
-                          key: 'open',
-                          label: s.booking_id ? 'Открыть бронь' : 'Открыть блокировку',
-                        },
-                      ]
-                    : []),
-                  ...(s.booking_id && (s.checkoutPhase || s.kind === 'assignment')
-                    ? [
-                        {
-                          key: 'checkout',
-                          label: s.checkoutPhase ? 'Открыть договор' : 'Создать договор',
-                        },
-                      ]
-                    : []),
-                  { key: 'vehicle', label: 'Автомобиль' },
-                ],
-                onClick: ({ key }) => {
-                  if (key === 'complete' && s.booking_id)
-                    onSelect({ kind: 'contract', id: s.booking_id, action: 'complete' });
-                  else if (key === 'checkout' && s.booking_id)
-                    onSelect({
-                      kind: 'contract',
-                      id: s.booking_id,
-                      action: s.checkoutPhase ? undefined : 'start',
-                    });
-                  else if (key === 'open') open();
-                  else openVehicle();
-                },
-              }}
-            >
-              <button
-                className={
-                  'calendar-event ' +
-                  (s.kind === 'technical' ? 'technical' : 'booking') +
-                  paymentClass +
-                  (s.booking_id && (s.kind === 'assignment' || s.kind === 'displaced')
-                    ? ' calendar-draggable'
-                    : '')
-                }
-                style={position}
-                onPointerDown={(e) => {
-                  if (
-                    e.button === 0 &&
-                    s.booking_id &&
-                    (s.kind === 'assignment' || s.kind === 'displaced')
-                  )
-                    onDragStart(s.booking_id, e.clientX, e.pointerId, e.currentTarget);
+            <Fragment key={s.id}>
+              <Dropdown
+                trigger={['contextMenu']}
+                menu={{
+                  items: [
+                    ...(activeRental ? [{ key: 'complete', label: 'Завершить аренду' }] : []),
+                    ...(!s.checkoutPhase
+                      ? [
+                          {
+                            key: 'open',
+                            label: s.booking_id ? 'Открыть бронь' : 'Открыть блокировку',
+                          },
+                        ]
+                      : []),
+                    ...(s.booking_id && (s.checkoutPhase || s.kind === 'assignment')
+                      ? [
+                          {
+                            key: 'checkout',
+                            label: s.checkoutPhase ? 'Открыть договор' : 'Создать договор',
+                          },
+                        ]
+                      : []),
+                    { key: 'vehicle', label: 'Автомобиль' },
+                  ],
+                  onClick: ({ key }) => {
+                    if (key === 'complete' && s.booking_id)
+                      onSelect({ kind: 'contract', id: s.booking_id, action: 'complete' });
+                    else if (key === 'checkout' && s.booking_id)
+                      onSelect({
+                        kind: 'contract',
+                        id: s.booking_id,
+                        action: s.checkoutPhase ? undefined : 'start',
+                      });
+                    else if (key === 'open') open();
+                    else openVehicle();
+                  },
                 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (e.currentTarget.dataset.suppressClick === 'true') {
-                    e.currentTarget.dataset.suppressClick = '';
-                    return;
-                  }
-                  open();
-                }}
-                onContextMenu={(event) => event.stopPropagation()}
               >
-                <Tooltip title={s.booking_id ? <BookingTooltip booking={s} /> : s.reason}>
-                  <span className="calendar-event-tooltip">
+                <button
+                  className={
+                    'calendar-event ' +
+                    (s.kind === 'technical' ? 'technical' : 'booking') +
+                    paymentClass +
+                    (s.booking_id && (s.kind === 'assignment' || s.kind === 'displaced')
+                      ? ' calendar-draggable'
+                      : '')
+                  }
+                  style={position}
+                  onPointerDown={(e) => {
+                    if (
+                      e.button === 0 &&
+                      s.booking_id &&
+                      (s.kind === 'assignment' || s.kind === 'displaced')
+                    )
+                      onDragStart(s.booking_id, e);
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (e.currentTarget.dataset.suppressClick === 'true') {
+                      e.currentTarget.dataset.suppressClick = '';
+                      return;
+                    }
+                    open();
+                  }}
+                  onContextMenu={(event) => event.stopPropagation()}
+                >
+                  <CalendarEventContent
+                    tooltip={s.booking_id ? <BookingTooltip booking={s} /> : s.reason}
+                    invoicePayment={s.invoicePayment}
+                  >
                     {s.booking_id ? (
                       <BookingBlock
                         name={s.customer_name ?? 'Бронь №' + s.booking_id}
                         phase={s.checkoutPhase}
                         returnInProgress={s.returnInProgress}
                         accountingEmailUnsent={s.accountingEmailUnsent}
-                        invoicePayment={s.invoicePayment}
                         start={s.start_at}
                       />
                     ) : (
                       s.reason
                     )}
-                  </span>
-                </Tooltip>
-              </button>
-            </Dropdown>
+                  </CalendarEventContent>
+                </button>
+              </Dropdown>
+              {conflicts.length > 0 && (
+                <div className="calendar-conflict-clip" style={position}>
+                  {conflicts.map((conflict) => {
+                    const start = Math.max(left, ((conflict.start - from) / DAY) * dayWidth);
+                    const end = Math.min(right, ((conflict.end - from) / DAY) * dayWidth);
+                    return (
+                      <button
+                        key={conflict.id}
+                        className="calendar-conflict-border"
+                        data-event-id={s.id}
+                        aria-label="Разобрать конфликт"
+                        title="Пересечение событий — открыть разбор"
+                        style={{ left: start - left, width: Math.max(4, end - start) }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelect(
+                            conflict.bookingId
+                              ? { kind: 'booking', id: conflict.bookingId }
+                              : { kind: 'vehicle', id: v.id },
+                          );
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </Fragment>
           );
-        })}
-        {layout.conflicts.flatMap((c) => {
-          const left = Math.max(0, ((c.start - from) / DAY) * dayWidth),
-            right = Math.min(days * dayWidth, ((c.end - from) / DAY) * dayWidth);
-          return layout.events
-            .filter((event) => c.eventIds.includes(event.id))
-            .map((event) => (
-              <button
-                key={c.id + ':' + event.id}
-                className="calendar-conflict-border"
-                data-event-id={event.id}
-                aria-label="Разобрать конфликт"
-                title="Пересечение событий — открыть разбор"
-                style={{ left, width: Math.max(4, right - left), top: 5 + event.lane * 38 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelect(
-                    c.bookingId
-                      ? { kind: 'booking', id: c.bookingId }
-                      : { kind: 'vehicle', id: v.id },
-                  );
-                }}
-              />
-            ));
         })}
       </div>
     </div>
@@ -447,13 +533,26 @@ function VehicleRow({
 }
 export default function CalendarGrid(props: Props) {
   const dragRef = useRef<Drag | null>(null);
+  const holdRef = useRef<{
+    timer: number;
+    pointerId: number;
+    initialPointer: PointerPosition;
+    latestPointer: PointerPosition;
+    source: HTMLElement;
+  } | null>(null);
   const frameRef = useRef(0);
-  const pointerRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerRef = useRef<PointerPosition | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
   const propsRef = useRef(props);
   propsRef.current = props;
-  const begin = (bookingId: number, startX: number, pointerId: number, source: HTMLElement) => {
+  const begin = (
+    bookingId: number,
+    startPointer: PointerPosition,
+    pointerId: number,
+    source: HTMLElement,
+    touch: boolean,
+  ) => {
     if (dragRef.current) return;
     const p = propsRef.current,
       b =
@@ -479,10 +578,11 @@ export default function CalendarGrid(props: Props) {
       events.set(item.vehicle_id, list);
     }
     dragRef.current = {
+      touch,
       bookingId,
       pointerId,
       source,
-      startX,
+      startPointer,
       startAt: Date.parse(b.start_at),
       endAt: Date.parse(b.end_at),
       vehicleId: b.vehicle_id ?? null,
@@ -496,44 +596,69 @@ export default function CalendarGrid(props: Props) {
       blockedByVehicle: new Map(),
       availabilityStart: null,
     };
-    if (ghostRef.current) {
-      ghostRef.current.replaceChildren(
-        ...Array.from(source.childNodes, (node) => node.cloneNode(true)),
-      );
-      const vehicle = document.createElement('span');
-      vehicle.className = 'calendar-booking-vehicle';
-      const reason = document.createElement('span');
-      reason.className = 'calendar-booking-reason';
-      ghostRef.current.append(vehicle, reason);
+    const ghost = ghostRef.current;
+    if (ghost) {
+      ghost.className = source.className;
+      ghost.classList.remove('calendar-draggable');
+      ghost.classList.add('calendar-drag-ghost');
+      ghost.style.setProperty('--drag-source-width', `${source.getBoundingClientRect().width}px`);
+      ghost.replaceChildren(...Array.from(source.childNodes, (node) => node.cloneNode(true)));
     }
   };
+  function requestDrag(bookingId: number, event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!event.isPrimary || holdRef.current || dragRef.current) return;
+    const { pointerId, clientX: x, clientY: y, currentTarget: source } = event;
+    const initialPointer = { x, y };
+    if (event.pointerType !== 'touch') {
+      begin(bookingId, initialPointer, pointerId, source, false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const hold = holdRef.current;
+      holdRef.current = null;
+      if (!hold || !source.isConnected) return;
+      begin(bookingId, hold.latestPointer, pointerId, source, true);
+      if (dragRef.current) source.classList.add('calendar-drag-ready');
+    }, 500);
+    holdRef.current = { timer, pointerId, initialPointer, latestPointer: initialPointer, source };
+  }
   useEffect(() => {
+    const root = rootRef.current;
+    const cancelHold = () => {
+      if (holdRef.current) window.clearTimeout(holdRef.current.timer);
+      holdRef.current = null;
+    };
     const paint = () => {
       frameRef.current = 0;
       const d = dragRef.current,
         pointer = pointerRef.current;
       if (!d || !pointer) return;
+      const deltaX = pointer.x - d.startPointer.x;
+      if (d.touch && !d.moved && deltaX === 0 && pointer.y === d.startPointer.y) return;
       const p = propsRef.current,
         step = 3600000;
-      const start =
-        d.startAt + Math.round((pointer.x - d.startX) / (p.dayWidth * (step / DAY))) * step;
+      const start = d.startAt + Math.round(deltaX / (p.dayWidth * (step / DAY))) * step;
       const hit = document
         .elementFromPoint(pointer.x, pointer.y)
         ?.closest<HTMLElement>('[data-vehicle-id]');
       const vehicleId =
         hit && rootRef.current?.contains(hit) ? Number(hit.dataset.vehicleId) : null;
-      if (!d.moved && Math.abs(pointer.x - d.startX) <= 2 && vehicleId === d.vehicleId) return;
-      const firstMove = !d.moved,
-        timeChanged = d.availabilityStart !== start,
-        vehicleChanged = d.targetVehicleId !== vehicleId;
+      if (!d.moved && Math.abs(deltaX) <= 2 && vehicleId === d.vehicleId) return;
+      const firstMove = !d.moved;
+      const timeChanged = d.availabilityStart !== start;
       d.moved = true;
       if (firstMove) d.source.classList.add('calendar-drag-source');
       const ghost = ghostRef.current;
       if (ghost) {
         ghost.hidden = false;
-        ghost.style.transform = `translate3d(${pointer.x + 12}px,${pointer.y + 12}px,0)`;
+        const x = Math.max(8, Math.min(pointer.x + 12, window.innerWidth - ghost.offsetWidth - 8));
+        const y = Math.max(
+          8,
+          Math.min(pointer.y + 12, window.innerHeight - ghost.offsetHeight - 8),
+        );
+        ghost.style.transform = `translate3d(${x}px,${y}px,0)`;
       }
-      if (d.availabilityStart !== start) {
+      if (timeChanged) {
         d.availabilityStart = start;
         d.nextStartAt = start;
         const end = d.endAt + (start - d.startAt);
@@ -542,14 +667,10 @@ export default function CalendarGrid(props: Props) {
           const conflict = (d.events.get(id) ?? []).some(
             (item) => item.bookingId !== d.bookingId && item.start < end && item.end > start,
           );
-          const reason = !vehicle?.is_ready
-            ? 'Автомобиль не готов к выдаче'
-            : conflict
-              ? 'Автомобиль занят на выбранный период'
-              : '';
-          d.blockedByVehicle.set(id, reason);
-          row.classList.toggle('calendar-drop-unavailable', !!reason);
-          row.classList.toggle('calendar-drop-available', !reason);
+          const blocked = !vehicle?.is_ready || conflict;
+          d.blockedByVehicle.set(id, blocked);
+          row.classList.toggle('calendar-drop-unavailable', blocked);
+          row.classList.toggle('calendar-drop-available', !blocked);
         }
       }
       if (d.targetVehicleId !== vehicleId) {
@@ -558,26 +679,11 @@ export default function CalendarGrid(props: Props) {
         d.targetVehicleId = vehicleId;
       }
       if (vehicleId !== null) d.rows.get(vehicleId)?.classList.add('calendar-drop-target');
-      const reason =
-        vehicleId === null
-          ? 'Перетащите бронь на строку автомобиля'
-          : (d.blockedByVehicle.get(vehicleId) ?? '');
-      d.blocked = !!reason;
+      d.blocked = vehicleId === null || d.blockedByVehicle.get(vehicleId) === true;
       ghost?.classList.toggle('blocked', d.blocked);
-      if (ghost && (firstMove || timeChanged || vehicleChanged)) {
+      if (ghost && timeChanged) {
         const bookingStart = ghost.querySelector('.calendar-booking-start');
         if (bookingStart) bookingStart.textContent = bookingStartLabel(start);
-        const vehicle = vehicleId === null ? undefined : d.vehicles.get(vehicleId),
-          vehicleLine = ghost.querySelector('.calendar-booking-vehicle');
-        if (vehicleLine)
-          vehicleLine.textContent = vehicle
-            ? [vehicle.brand_name, vehicle.model_name, '·', vehicle.plate].filter(Boolean).join(' ')
-            : 'Автомобиль не выбран';
-        const reasonLine = ghost.querySelector<HTMLElement>('.calendar-booking-reason');
-        if (reasonLine) {
-          reasonLine.textContent = reason;
-          reasonLine.hidden = !reason;
-        }
       }
     };
     const clear = () => {
@@ -593,17 +699,30 @@ export default function CalendarGrid(props: Props) {
           'calendar-drop-target',
         ),
       );
-      d.source.classList.remove('calendar-drag-source');
-      if (ghostRef.current) ghostRef.current.hidden = true;
+      d.source.classList.remove('calendar-drag-source', 'calendar-drag-ready');
+      const ghost = ghostRef.current;
+      if (ghost) {
+        ghost.hidden = true;
+        ghost.className = 'calendar-drag-ghost';
+        ghost.replaceChildren();
+      }
       dragRef.current = null;
     };
     const move = (e: PointerEvent) => {
+      const hold = holdRef.current;
+      if (hold?.pointerId === e.pointerId) {
+        const { x, y } = hold.initialPointer;
+        if (Math.hypot(e.clientX - x, e.clientY - y) > 8) cancelHold();
+        else hold.latestPointer = { x: e.clientX, y: e.clientY };
+        return;
+      }
       const d = dragRef.current;
       if (!d || e.pointerId !== d.pointerId) return;
       pointerRef.current = { x: e.clientX, y: e.clientY };
       if (!frameRef.current) frameRef.current = requestAnimationFrame(paint);
     };
     const up = (e: PointerEvent) => {
+      if (holdRef.current?.pointerId === e.pointerId) cancelHold();
       const d = dragRef.current;
       if (!d || e.pointerId !== d.pointerId) return;
       pointerRef.current = { x: e.clientX, y: e.clientY };
@@ -620,7 +739,7 @@ export default function CalendarGrid(props: Props) {
         source,
       } = d;
       clear();
-      if (!moved) return;
+      if (!moved && !d.touch) return;
       source.dataset.suppressClick = 'true';
       setTimeout(() => {
         source.dataset.suppressClick = '';
@@ -633,19 +752,65 @@ export default function CalendarGrid(props: Props) {
         });
     };
     const cancel = (e: PointerEvent) => {
+      if (holdRef.current?.pointerId === e.pointerId) cancelHold();
       if (e.pointerId === dragRef.current?.pointerId) clear();
     };
+    const interrupt = () => {
+      cancelHold();
+      clear();
+    };
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length > 1) interrupt();
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      // Let the browser scroll until the hold finishes. Changing touch-action
+      // after pointerdown cannot take over the current gesture.
+      if (dragRef.current?.touch && event.cancelable) event.preventDefault();
+    };
+    const onContextMenu = (event: MouseEvent) => {
+      const source =
+        holdRef.current?.source ?? (dragRef.current?.touch ? dragRef.current.source : null);
+      if (event.target instanceof Node && source?.contains(event.target)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    window.addEventListener('touchstart', onTouchStart, { passive: true });
+    root?.addEventListener('touchmove', onTouchMove, { passive: false });
+    root?.addEventListener('contextmenu', onContextMenu, true);
+    window.addEventListener('blur', interrupt);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', cancel);
     return () => {
+      window.removeEventListener('touchstart', onTouchStart);
+      root?.removeEventListener('touchmove', onTouchMove);
+      root?.removeEventListener('contextmenu', onContextMenu, true);
+      window.removeEventListener('blur', interrupt);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', cancel);
-      clear();
+      interrupt();
     };
   }, []);
-  const days = Math.ceil((props.to - props.from) / DAY);
+  const { from, to, events } = props;
+  const dates = useMemo(() => calendarDates(from, to), [from, to]);
+  const days = dates.days.length;
+  const eventsByVehicle = useMemo(() => {
+    const grouped = new Map<number, ScheduleEvent[]>();
+    for (const event of events) {
+      if (
+        event.vehicle_id === null ||
+        Date.parse(event.start_at) >= to ||
+        Date.parse(event.end_at) <= from
+      )
+        continue;
+      const group = grouped.get(event.vehicle_id);
+      if (group) group.push(event);
+      else grouped.set(event.vehicle_id, [event]);
+    }
+    return grouped;
+  }, [events, from, to]);
   const today = moscowDayStart(moscowDate(Date.now()));
   const grouped = new Map<string, CalendarVehicle[]>();
   for (const v of props.vehicles) {
@@ -683,7 +848,17 @@ export default function CalendarGrid(props: Props) {
     return (
       <>
         {vehicles.map((v) => (
-          <VehicleRow key={v.id} {...props} vehicle={v} onDragStart={begin} />
+          <VehicleRow
+            key={v.id}
+            vehicle={v}
+            dates={dates.days}
+            events={eventsByVehicle.get(v.id) ?? []}
+            from={from}
+            dayWidth={props.dayWidth}
+            onSelect={props.onSelect}
+            groupBy={props.groupBy}
+            onDragStart={requestDrag}
+          />
         ))}
         {unassigned.map((b) => {
           const open = () =>
@@ -693,6 +868,10 @@ export default function CalendarGrid(props: Props) {
               days * props.dayWidth,
               ((Date.parse(b.end_at) - props.from) / DAY) * props.dayWidth,
             );
+          const position = {
+            '--event-left': `${left}px`,
+            '--event-width': `${Math.max(4, right - left)}px`,
+          } as CSSProperties;
           return (
             <div
               className="calendar-row calendar-unassigned-row"
@@ -711,15 +890,15 @@ export default function CalendarGrid(props: Props) {
                 )}
               </button>
               <div className="calendar-track" style={{ width: days * props.dayWidth }}>
-                <Tooltip title={<BookingTooltip booking={b} />}>
+                <CalendarEventTooltip title={<BookingTooltip booking={b} />}>
                   <button
                     className={
                       'calendar-event unassigned calendar-draggable' +
                       (b.problemReasons?.length ? ' problematic' : '')
                     }
-                    style={{ left, width: Math.max(4, right - left) }}
+                    style={position}
                     onPointerDown={(e) => {
-                      if (e.button === 0) begin(b.id, e.clientX, e.pointerId, e.currentTarget);
+                      if (e.button === 0) requestDrag(b.id, e);
                     }}
                     onClick={(e) => {
                       if (e.currentTarget.dataset.suppressClick === 'true') {
@@ -729,42 +908,45 @@ export default function CalendarGrid(props: Props) {
                       open();
                     }}
                   >
-                    <BookingBlock
-                      name={b.customer_name + ' · Не назначен'}
-                      start={b.start_at}
-                      phase={b.checkoutPhase}
-                      returnInProgress={b.returnInProgress}
-                      accountingEmailUnsent={b.accountingEmailUnsent}
-                      invoicePayment={b.invoicePayment}
-                    />
+                    <CalendarEventContent invoicePayment={b.invoicePayment}>
+                      <BookingBlock
+                        name={b.customer_name + ' · Не назначен'}
+                        start={b.start_at}
+                        phase={b.checkoutPhase}
+                        returnInProgress={b.returnInProgress}
+                        accountingEmailUnsent={b.accountingEmailUnsent}
+                      />
+                    </CalendarEventContent>
                   </button>
-                </Tooltip>
-                {b.problemReasons?.length > 0 &&
-                  (b.conflicts ?? []).map((c) => {
-                    const start = Math.max(
-                        props.from,
-                        Date.parse(b.start_at),
-                        Date.parse(c.overlap_start ?? c.start_at),
-                      ),
-                      end = Math.min(
-                        props.to,
-                        Date.parse(b.end_at),
-                        Date.parse(c.overlap_end ?? c.end_at),
-                      );
-                    if (start >= end) return null;
-                    const x = ((start - props.from) / DAY) * props.dayWidth,
-                      w = ((end - start) / DAY) * props.dayWidth;
-                    return (
-                      <div key={c.id}>
+                </CalendarEventTooltip>
+                {b.problemReasons?.length > 0 && !!b.conflicts?.length && (
+                  <div className="calendar-conflict-clip" style={position}>
+                    {b.conflicts.map((c) => {
+                      const start = Math.max(
+                          props.from,
+                          Date.parse(b.start_at),
+                          Date.parse(c.overlap_start ?? c.start_at),
+                        ),
+                        end = Math.min(
+                          props.to,
+                          Date.parse(b.end_at),
+                          Date.parse(c.overlap_end ?? c.end_at),
+                        );
+                      if (start >= end) return null;
+                      const x = ((start - props.from) / DAY) * props.dayWidth,
+                        w = ((end - start) / DAY) * props.dayWidth;
+                      return (
                         <button
+                          key={c.id}
                           className="calendar-conflict-border"
                           aria-label="Разобрать конфликт неназначенной брони"
-                          style={{ left: x, width: Math.max(4, w), top: 5 }}
+                          style={{ left: x - left, width: Math.max(4, w) }}
                           onClick={() => props.onSelect({ kind: 'booking', id: b.id })}
                         />
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -772,40 +954,25 @@ export default function CalendarGrid(props: Props) {
       </>
     );
   };
-  const monthSections: { label: string; days: number }[] = [];
-  for (let i = 0; i < days; i++) {
-    const value = new Date(props.from + i * DAY)
-      .toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow', month: 'long', year: 'numeric' })
-      .replace(/\s*г\.$/, '');
-    const label = value[0].toUpperCase() + value.slice(1);
-    const last = monthSections.at(-1);
-    if (last?.label === label) last.days++;
-    else monthSections.push({ label, days: 1 });
-  }
   return (
     <div
       ref={rootRef}
       className="calendar-grid-content"
-      style={{ width: days * props.dayWidth + 260 }}
+      style={{ width: `calc(${days * props.dayWidth}px + var(--calendar-label-width))` }}
     >
-      <div ref={ghostRef} className="calendar-drag-ghost" hidden />
+      <div ref={ghostRef} className="calendar-drag-ghost" hidden aria-hidden="true" />
       <div className="calendar-row calendar-head">
         <div className="calendar-label">Автомобиль</div>
         <div className="calendar-date-head">
           <div className="calendar-months">
-            {monthSections.map((month, i) => (
+            {dates.months.map((month, i) => (
               <div key={i} style={{ width: month.days * props.dayWidth }}>
                 <span>{month.label}</span>
               </div>
             ))}
           </div>
           <div className="calendar-days">
-            {Array.from({ length: days }, (_, i) => {
-              const at = props.from + i * DAY;
-              const weekday = new Date(at).toLocaleDateString('ru-RU', {
-                timeZone: 'Europe/Moscow',
-                weekday: 'short',
-              });
+            {dates.days.map(({ at, number, weekday }, i) => {
               const weekend = ['сб', 'вс'].includes(weekday);
               return (
                 <div
@@ -817,11 +984,7 @@ export default function CalendarGrid(props: Props) {
                   aria-current={at === today ? 'date' : undefined}
                   key={i}
                 >
-                  {new Date(at).toLocaleDateString('ru-RU', {
-                    timeZone: 'Europe/Moscow',
-                    day: 'numeric',
-                  })}{' '}
-                  {weekday}
+                  {number} {weekday}
                 </div>
               );
             })}

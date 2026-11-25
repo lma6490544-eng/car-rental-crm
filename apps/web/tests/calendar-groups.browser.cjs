@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
-const { chromium } = require('playwright');
+const { chromium, devices } = require('playwright');
 const { readFileSync } = require('node:fs');
 
 test('calendar status filters and sticky nested group headers', { timeout: 120000 }, async () => {
@@ -132,7 +132,71 @@ test('calendar status filters and sticky nested group headers', { timeout: 12000
         return rect.top < header.bottom && rect.bottom > header.bottom;
       }),
     );
+    await page.locator('.calendar-grid').evaluate(async (grid) => {
+      await new Promise((resolve) => {
+        grid.addEventListener('scroll', resolve, { once: true });
+        grid.scrollTop = 400;
+      });
+
+      const dot = grid.querySelector('.current-time-indicator-dot');
+      dot.style.pointerEvents = 'auto';
+      try {
+        for (const scrollTop of [200, 50, 0]) {
+          grid.scrollTop = scrollTop;
+          const rect = dot.getBoundingClientRect();
+          const centerX = rect.left + rect.width / 2;
+          if (
+            document.elementFromPoint(centerX, rect.top + 1) !== dot ||
+            document.elementFromPoint(centerX, rect.bottom - 1) !== dot
+          ) {
+            throw new Error(`Current-time dot is clipped at scrollTop ${scrollTop}`);
+          }
+        }
+      } finally {
+        dot.style.removeProperty('pointer-events');
+        grid.scrollTop = 0;
+      }
+    });
     assert.equal(await page.locator('.calendar-event.booking').count(), 1);
+    const eventViewport = async (edge) => {
+      const leftEdgeErrors = await page.locator('.calendar-grid').evaluate((grid, edge) => {
+        const event = grid.querySelector('.calendar-event.booking');
+        const label = event.closest('.calendar-row').querySelector('.calendar-label');
+        const content = event.querySelector('.calendar-event-content');
+        const gridRight = grid.getBoundingClientRect().left + grid.clientLeft + grid.clientWidth;
+        const eventLeft = event.getBoundingClientRect().left;
+        if (edge === 'right') {
+          grid.scrollLeft += eventLeft - (gridRight - 96);
+          return [];
+        }
+
+        const eventStart = grid.scrollLeft + eventLeft - label.getBoundingClientRect().right;
+        return [32, 81, 146, 64, 32].map((offset) => {
+          grid.scrollLeft = eventStart + offset;
+          // Read before any scroll event can update the available width.
+          return content.getBoundingClientRect().left - label.getBoundingClientRect().right - 9;
+        });
+      }, edge);
+      for (const difference of leftEdgeErrors) {
+        assert.ok(Math.abs(difference) < 1, 'content must stick before the scroll handler runs');
+      }
+      await page.waitForFunction((edge) => {
+        const grid = document.querySelector('.calendar-grid');
+        const event = grid.querySelector('.calendar-event.booking');
+        const content = event.querySelector('.calendar-event-content').getBoundingClientRect();
+        const label = event.closest('.calendar-row').querySelector('.calendar-label');
+        const right = grid.getBoundingClientRect().left + grid.clientLeft + grid.clientWidth;
+        if (edge === 'left') {
+          return Math.abs(content.left - label.getBoundingClientRect().right - 9) < 1;
+        }
+        return content.width > 0 && Math.abs(content.right - right + 9) < 1;
+      }, edge);
+    };
+    await eventViewport('left');
+    await eventViewport('right');
+    await page.locator('.calendar-grid').evaluate((grid) => {
+      grid.scrollLeft = 15 * 96;
+    });
     const conflictBorders = page.locator('[data-vehicle-id="1200"] .calendar-conflict-border');
     assert.equal(await conflictBorders.count(), 2);
     for (const [eventId, eventClass, widthRatio] of [
@@ -154,6 +218,18 @@ test('calendar status filters and sticky nested group headers', { timeout: 12000
         'rgb(214, 70, 80)',
       );
     }
+    const clippedStrip = await conflictBorders
+      .and(page.locator('[data-event-id="2"]'))
+      .evaluate((strip) => {
+        const { left, right, top } = strip.getBoundingClientRect();
+        const hitsStrip = (x, y) => document.elementFromPoint(x, y) === strip;
+        return {
+          leftCorner: hitsStrip(left + 0.5, top + 0.5),
+          middle: hitsStrip((left + right) / 2, top + 1),
+          rightCorner: hitsStrip(right - 0.5, top + 0.5),
+        };
+      });
+    assert.deepEqual(clippedStrip, { leftCorner: false, middle: true, rightCorner: false });
     assert.notEqual(
       await page
         .locator('.calendar-event.booking')
@@ -254,7 +330,8 @@ test('calendar status filters and sticky nested group headers', { timeout: 12000
       '14.11.2026',
       'loader must appear before the date range changes',
     );
-    await page.locator('.calendar-grid').evaluate((el) => {
+    await page.locator('.calendar-grid[aria-busy="false"]').evaluate(async (el) => {
+      await new Promise(requestAnimationFrame);
       el.scrollLeft = el.scrollWidth;
     });
     await page.waitForFunction(
@@ -394,7 +471,158 @@ test('calendar status filters and sticky nested group headers', { timeout: 12000
       centers.every((v) => Math.abs(v.offset) < 1),
       JSON.stringify(centers),
     );
+    events[0].end_at = '2026-11-14T12:00:00+03:00';
+    events[0].invoicePayment = {
+      status: 'unpaid',
+      priceRub: '10000',
+      receivedRub: '0',
+      remainingRub: '10000',
+    };
+    await open();
+    const paymentBadge = page
+      .locator('.calendar-event.booking')
+      .getByRole('img', { name: /Осталось оплатить: 10\s000 ₽/ });
+    const shortBooking = await paymentBadge.evaluate((badge) => {
+      const booking = badge.closest('.calendar-event').getBoundingClientRect();
+      const badgeBounds = badge.getBoundingClientRect();
+      return {
+        bookingHeight: booking.height,
+        outsideUpperRight: badgeBounds.top < booking.top && badgeBounds.right > booking.right,
+      };
+    });
+    assert.deepEqual(shortBooking, { bookingHeight: 32, outsideUpperRight: true });
+    await paymentBadge.hover();
+    await page
+      .getByRole('tooltip')
+      .getByText(/Осталось оплатить: 10\s000 ₽/)
+      .waitFor();
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 844, height: 300 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.waitForFunction(() => {
+        const grid = document.querySelector('.calendar-grid').getBoundingClientRect();
+        const label = document
+          .querySelector('.calendar-head .calendar-label')
+          .getBoundingClientRect();
+        const actions = document.querySelector('.calendar-header-actions').getBoundingClientRect();
+        return (
+          grid.height >= innerHeight * 0.65 &&
+          label.width < grid.width * 0.4 &&
+          actions.right <= innerWidth &&
+          document.documentElement.scrollWidth <= innerWidth
+        );
+      });
+    }
     assert.deepEqual(errors, []);
+    const mobile = await browser.newPage(devices['iPhone 13']);
+    await mobile.route('**/api/v1/**', (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/auth/me')) {
+        return route.fulfill({
+          json: { user: { id: 1, fullName: 'Тест', role: 'manager' }, csrfToken: 'test' },
+        });
+      }
+      if (path.endsWith('/calendar')) {
+        return route.fulfill({
+          json: {
+            vehicles,
+            events,
+            unassignedBookings: [],
+            problems: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+          },
+        });
+      }
+      return route.fulfill({ status: 404, json: {} });
+    });
+    await mobile.goto(origin + '/calendar?date=2026-11-14');
+    const entry = mobile.locator('.calendar-event.booking .calendar-event-content');
+    await entry.tap();
+    await mobile.locator('.booking-drawer').waitFor();
+    async function assertNoTouchTooltip() {
+      // Allow hover delay and popup animation to finish after the synthetic click.
+      await mobile.waitForTimeout(700);
+      assert.equal(await mobile.getByRole('tooltip').count(), 0);
+    }
+    await assertNoTouchTooltip();
+    await mobile.locator('.booking-drawer .ant-drawer-close').tap();
+    const datePicker = mobile.getByRole('textbox', { name: 'Дата календаря' });
+    const filters = mobile.locator('.calendar-filter-content');
+    assert.equal(await datePicker.count(), 0);
+    assert.equal(await mobile.getByRole('button', { name: 'Предыдущий месяц' }).count(), 0);
+    assert.equal(await mobile.getByRole('button', { name: 'Следующий месяц' }).count(), 0);
+    await mobile.getByRole('button', { name: 'Фильтры' }).tap();
+    assert.equal(
+      await filters.getByRole('textbox', { name: 'Дата календаря' }).inputValue(),
+      '14.11.2026',
+    );
+    await filters.evaluate((panel) => {
+      const bounds = panel.getBoundingClientRect();
+      if (bounds.left < 0 || bounds.right > innerWidth) {
+        throw new Error('Calendar filters overflow the viewport');
+      }
+    });
+    await datePicker.tap();
+    await mobile.locator('.ant-picker-dropdown:visible td[title="2026-11-20"]').tap();
+    await mobile.waitForURL((url) => url.searchParams.get('date') === '2026-11-20');
+    const waitForDate = (date) =>
+      mobile.waitForFunction(
+        (date) => document.querySelector('input[aria-label="Дата календаря"]').value === date,
+        date,
+      );
+    await waitForDate('20.11.2026');
+    await filters.getByRole('button', { name: 'Предыдущий месяц' }).tap();
+    await waitForDate('21.10.2026');
+    await filters.getByRole('button', { name: 'Следующий месяц' }).tap();
+    await waitForDate('20.11.2026');
+    await mobile.getByRole('button', { name: 'Фильтры' }).tap();
+    await filters.waitFor({ state: 'hidden' });
+    assert.equal(await mobile.locator('.ant-layout-sider').count(), 0);
+    const menuTrigger = mobile.getByRole('button', { name: 'Меню', exact: true });
+    const calendarTitle = mobile.getByRole('heading', { name: 'График', exact: true });
+    const todayButton = mobile.getByRole('button', { name: 'Сегодня', exact: true });
+    const filtersButton = mobile.getByRole('button', { name: 'Фильтры', exact: true });
+    const problemsButton = mobile.getByRole('button', { name: 'Проблемы (4)', exact: true });
+    const createButton = mobile.getByRole('button', { name: 'Бронь', exact: true });
+    assert.equal(await createButton.innerText(), '');
+    const headerControls = [
+      menuTrigger,
+      calendarTitle,
+      todayButton,
+      filtersButton,
+      problemsButton,
+      createButton,
+    ];
+    for (const width of [390, 320]) {
+      await mobile.setViewportSize({ width, height: 844 });
+      const bounds = await Promise.all(headerControls.map((control) => control.boundingBox()));
+      const layout = JSON.stringify({ width, bounds });
+      const [menuBounds, ...otherBounds] = bounds;
+      assert.ok(menuBounds);
+      let previousRight = menuBounds.x + menuBounds.width;
+      const center = menuBounds.y + menuBounds.height / 2;
+      for (const controlBounds of otherBounds) {
+        assert.ok(controlBounds);
+        assert.ok(Math.abs(controlBounds.y + controlBounds.height / 2 - center) < 1, layout);
+        assert.ok(controlBounds.x >= previousRight, layout);
+        previousRight = controlBounds.x + controlBounds.width;
+      }
+      assert.ok(previousRight <= width, layout);
+    }
+    await menuTrigger.tap();
+    const mobileMenu = mobile.getByRole('dialog', { name: 'Меню' });
+    await mobileMenu.getByRole('link', { name: 'График', exact: true }).tap();
+    await mobile.waitForURL(origin + '/calendar');
+    await mobileMenu.waitFor({ state: 'hidden' });
+    await assertNoTouchTooltip();
+    await mobile.setViewportSize({ width: 844, height: 390 });
+    const collapsedSidebar = mobile.locator('.ant-layout-sider-collapsed');
+    await collapsedSidebar.locator('.sidebar-brand').press('Tab');
+    const menuLink = collapsedSidebar.getByRole('link', { name: 'График', exact: true });
+    await menuLink.focus();
+    await mobile.getByRole('tooltip').getByText('График', { exact: true }).waitFor();
+    await mobile.close();
   } finally {
     if (browser) await browser.close();
     server.kill();

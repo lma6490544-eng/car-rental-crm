@@ -1,12 +1,15 @@
 import { Switch, Typography } from 'antd';
 import { useTheme } from '../theme';
+import { PageTitle } from '../shared/PageTitle';
 import PushSettings from './PushSettings';
 
 export default function Settings() {
   const { mode, setMode } = useTheme();
   return (
     <section className="settings-page">
-      <h1>Настройки</h1>
+      <PageTitle>
+        <h1>Настройки</h1>
+      </PageTitle>
       <div className="settings-theme-row">
         <div>
           <Typography.Title level={5}>Тёмная тема</Typography.Title>

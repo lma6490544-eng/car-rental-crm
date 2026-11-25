@@ -109,7 +109,7 @@ export function CheckoutDriver({
       />
       {(hasChanges || hasSuggestions) && (
         <Space>
-          <Button type="primary" htmlType="submit">
+          <Button className="checkout-primary-button" type="primary" htmlType="submit">
             Сохранить
           </Button>
           {hasChanges && <Button onClick={clear}>Отмена</Button>}

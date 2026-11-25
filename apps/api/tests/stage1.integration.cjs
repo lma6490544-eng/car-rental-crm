@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID, randomBytes } = require('node:crypto');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { once } = require('node:events');
 const net = require('node:net');
 const path = require('node:path');
@@ -9,7 +9,6 @@ const { Pool } = require('pg');
 const { drizzle } = require('drizzle-orm/node-postgres');
 const { migrate } = require('drizzle-orm/node-postgres/migrator');
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env'), quiet: true });
-const { passwordHash } = require('../dist/platform/security');
 
 test('Stage 1: real PostgreSQL + HTTP integration', { timeout: 120000 }, async (t) => {
   const originalUrl = process.env.DATABASE_URL;
@@ -35,12 +34,30 @@ test('Stage 1: real PostgreSQL + HTTP integration', { timeout: 120000 }, async (
   await adminPool.query('CREATE DATABASE "' + name + '"');
   pool = new Pool({ connectionString: testUrl.toString() });
   await migrate(drizzle(pool), { migrationsFolder: path.resolve(__dirname, '../drizzle') });
-  const password = 'Test-' + randomBytes(18).toString('base64url');
-  const seeded = await pool.query(
-    "INSERT INTO users (full_name,login,password_hash,role) VALUES ('Test admin','admin',$1,'admin') RETURNING id",
-    [await passwordHash(password)],
-  );
-  const adminId = seeded.rows[0].id;
+  const password = randomBytes(6).toString('base64url');
+  const bootstrapAdmin = (adminPassword) =>
+    spawnSync(process.execPath, ['dist/bootstrap-admin.js'], {
+      cwd: path.resolve(__dirname, '..'),
+      env: {
+        ...process.env,
+        DATABASE_URL: testUrl.toString(),
+        ADMIN_LOGIN: 'admin',
+        ADMIN_FULL_NAME: 'Test admin',
+        ADMIN_PASSWORD: adminPassword,
+      },
+      encoding: 'utf8',
+      timeout: 15000,
+      windowsHide: true,
+    });
+  const rejected = bootstrapAdmin(password.slice(1));
+  assert.ifError(rejected.error);
+  assert.equal(rejected.status, 1, 'bootstrap must reject a seven-character password');
+  const created = bootstrapAdmin(password);
+  assert.ifError(created.error);
+  assert.equal(created.status, 0, 'bootstrap must accept an eight-character password');
+  const admins = await pool.query("SELECT id FROM users WHERE login='admin' AND role='admin'");
+  assert.equal(admins.rowCount, 1);
+  const adminId = admins.rows[0].id;
   const port = await new Promise((resolve) => {
     const server = net.createServer();
     server.listen(0, '127.0.0.1', () => {
@@ -155,7 +172,8 @@ test('Stage 1: real PostgreSQL + HTTP integration', { timeout: 120000 }, async (
       400,
     );
     assert.equal(
-      (await request('/admin/users', { ...options, body: { ...input, password: '123' } })).status,
+      (await request('/admin/users', { ...options, body: { ...input, password: '1234567' } }))
+        .status,
       400,
     );
     assert.equal((await request('/admin/users', { ...options, key: undefined })).status, 400);

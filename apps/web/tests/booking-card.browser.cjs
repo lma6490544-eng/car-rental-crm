@@ -46,6 +46,7 @@ test(
       browser = await chromium.launch({ channel: 'msedge', headless: true });
       const page = await browser.newPage({ viewport: { width: 1440, height: 960 } }),
         errors = [];
+      page.setDefaultTimeout(12000);
       page.on('pageerror', (e) => errors.push(e.message));
       const booking = {
         id: 9,
@@ -201,8 +202,9 @@ test(
       });
       await page.goto(origin + '/calendar?booking=9');
       const drawer = page.locator('.booking-drawer');
+      const heading = drawer.locator('.booking-drawer-heading');
       try {
-        await drawer.getByText('До выдачи', { exact: true }).waitFor({ timeout: 10000 });
+        await heading.getByText('Создана 14.11.2026', { exact: true }).waitFor({ timeout: 10000 });
       } catch (e) {
         throw new Error(
           JSON.stringify({ errors, body: await page.locator('body').innerText() }) +
@@ -210,27 +212,27 @@ test(
             e.message,
         );
       }
-      await drawer.getByText('Плановая стоимость брони', { exact: true }).waitFor();
-      assert.equal(
-        await drawer.locator('.booking-drawer-heading .ant-tag').innerText(),
-        'До выдачи',
-      );
+      assert.equal(await heading.getByText('Бронь №9', { exact: true }).innerText(), 'Бронь №9');
+      assert.equal(await heading.locator('.ant-tag').count(), 0);
       assert.ok((await drawer.locator('.booking-date-range').innerText()).includes('1 сутки'));
       assert.equal(await drawer.locator('.booking-overview-row').count(), 4);
-      assert.equal(await drawer.locator('.booking-financial-cell').count(), 5);
       assert.equal(
         await drawer.evaluate((el) => getComputedStyle(el).backgroundColor),
         'rgb(15, 30, 46)',
       );
       assert.ok(!(await drawer.locator('.booking-date-range').innerText()).includes('10:00:00'));
       assert.equal(await drawer.locator('.ant-collapse-item-active').count(), 0);
-      await drawer
+      await drawer.getByText('Денежные операции', { exact: true }).click();
+      const finance = drawer.getByRole('region', { name: 'Финансы клиента' });
+      await finance.getByText('Плановая стоимость брони', { exact: true }).waitFor();
+      assert.equal(await finance.locator('.booking-financial-cell').count(), 5);
+      await finance
         .getByRole('button', { name: 'Возврат и доступные средства', exact: true })
         .click();
-      await drawer
+      await finance
         .getByRole('button', { name: 'Провести денежную операцию', exact: true })
         .waitFor();
-      await drawer.getByRole('button', { name: 'Отмена', exact: true }).click();
+      await finance.getByRole('button', { name: 'Отмена', exact: true }).click();
       await drawer.getByRole('button', { name: 'Действия с бронью', exact: true }).click();
       await page.getByRole('menuitem', { name: 'Отменить бронь', exact: true }).click();
       await page.getByRole('dialog', { name: 'Отменить бронь', exact: true }).waitFor();

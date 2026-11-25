@@ -265,7 +265,11 @@ process.on('message', async ({ id, command, value }) => {
           ordinaryCalls = 0;
         const results = [];
         for (const { name, input } of value.inputs) {
-          solverTrace.reset({ mode: 'record', path: value.solverTracePath });
+          solverTrace.reset({
+            mode: 'record',
+            primaryFromPairs: true,
+            path: value.solverTracePath,
+          });
           const expected = await oldInspect(input);
           solverTrace.finish();
           solverTrace.reset({ mode: 'compare', path: value.solverTracePath });
@@ -276,7 +280,11 @@ process.on('message', async ({ id, command, value }) => {
             { ...actual, availability: strip(actual.availability) },
             { ...expected, availability: strip(expected.availability) },
           );
-          solverTrace.reset({ mode: 'record', path: value.solverTracePath });
+          solverTrace.reset({
+            mode: 'record',
+            primaryFromPairs: true,
+            path: value.solverTracePath,
+          });
           const oldOrdinary = await original.inspect(c, input);
           solverTrace.finish();
           solverTrace.reset({ mode: 'compare', path: value.solverTracePath });

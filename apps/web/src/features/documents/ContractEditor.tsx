@@ -29,16 +29,14 @@ export function OpenDocumentButton({
   path,
   label,
   onOpen,
-  secondary = false,
 }: {
   path: string;
   label: string;
   onOpen: () => void;
-  secondary?: boolean;
 }) {
   return (
     <Button
-      type={secondary ? 'default' : 'primary'}
+      type="default"
       href={'/api/v1' + path}
       className="document-open-link"
       aria-label={label}
@@ -223,7 +221,6 @@ export function ContractEditor({
               path={path + '/' + latest.id + '/pdf'}
               label="Открыть договор"
               onOpen={() => onDocumentOpen(latest.id)}
-              secondary={editingRevision}
             />
           ) : editingRevision && !contractGenerating ? (
             <Button disabled icon={<ExportOutlined />} aria-label="Открыть договор">
@@ -231,6 +228,7 @@ export function ContractEditor({
             </Button>
           ) : (
             <Button
+              className="checkout-primary-button"
               type="primary"
               loading={contractGenerating}
               aria-busy={contractGenerating}
@@ -314,6 +312,7 @@ export function ContractEditor({
                 Отменить
               </Button>
               <Button
+                className="checkout-primary-button"
                 type="primary"
                 loading={contractGenerating}
                 disabled={!canGenerate}

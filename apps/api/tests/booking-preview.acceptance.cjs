@@ -161,8 +161,8 @@ test(
         assert.equal(
           actual.trace.filter(([sql]) => sql.startsWith('SELECT id,model_id,is_ready,version'))
             .length,
-          2,
-          'both availability contexts remain',
+          1,
+          'one read of availability facts per preview',
         );
       }
       assert.deepEqual(
@@ -398,7 +398,7 @@ test(
             assert.deepEqual(
               concurrent.value,
               stable,
-              'price, both evaluations and exact HMAC use the old snapshot',
+              'price, alternatives and exact HMAC use the old snapshot',
             );
             const fresh = await outcome(owner, body);
             assert.equal(fresh.value.availability.status, 'deficit');

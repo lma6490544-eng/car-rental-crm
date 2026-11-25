@@ -738,9 +738,9 @@ export function ContractCheckout({
         ) : (
           <BookingForm
             key={termsSource.version + ':' + termsReset}
+            mode="terms"
             termsRef={termsForm}
             initial={{
-              termsOnly: true,
               bookingId: id,
               vehicleId: termsSource.vehicle_id ?? undefined,
               calculation: termsSource.terms[0]?.snapshot,
@@ -1192,6 +1192,7 @@ export function ContractCheckout({
                 <Space wrap>
                   <Button
                     ref={issueButtonRef}
+                    className="checkout-primary-button"
                     type="primary"
                     aria-describedby={issueChecklist.length ? issueBlockersId : undefined}
                     disabled={command.locked || (!canIssue && !unsaved.length)}

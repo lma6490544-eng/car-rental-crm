@@ -50,7 +50,7 @@
 | Область | Предлагаемые маршруты относительно `/api/v1` |
 | --- | --- |
 | Сессии | POST `/auth/login`, POST `/auth/logout`, GET `/auth/me` |
-| Пользователи | GET/POST `/admin/users` — admin; body создания ровно fullName/login/password, роль manager задаёт сервер |
+| Пользователи | GET/POST `/admin/users` — admin; body создания ровно fullName/login/password, длина password 8–128 символов, роль manager задаёт сервер |
 | Справочники | GET `/vehicle-brands`, `/vehicle-models`, `/equivalence-groups`; заполнение seed/config, UI-конструкторов P0 нет |
 | Машины | GET/POST `/vehicles`, GET/PATCH `/vehicles/:id`, POST `/vehicles/:id/archive` |
 | Клиенты | GET/POST `/customers`, GET/PATCH `/customers/:id`, POST `/customers/:id/documents`, `/block`, `/unblock`; notes и история по ID |

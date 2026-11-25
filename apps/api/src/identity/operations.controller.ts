@@ -1,7 +1,7 @@
 import { Controller, Get, Query, Req } from '@nestjs/common';
 import { z } from 'zod';
 import { DatabaseService } from '../database.service';
-import { CommandsService } from '../platform/commands.service';
+import { CommandsService, commandName } from '../platform/commands.service';
 import { AuthRequest, parse, fail } from '../platform/security';
 
 @Controller('operations')
@@ -16,50 +16,7 @@ export class OperationsController {
       z
         .object({
           key: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/),
-          command: z.enum([
-            'finance.post',
-            'schedule.update',
-            'bookings.create',
-            'bookings.accounting-email',
-            'bookings.terms',
-            'bookings.assign',
-            'bookings.move',
-            'bookings.cancel',
-            'schedule.create',
-            'schedule.cancel',
-            'pricing.quote',
-            'pricing.confirm',
-            'users.create',
-            'users.status',
-            'customers.create',
-            'customers.update',
-            'customers.block',
-            'customers.unblock',
-            'customers.note',
-            'customers.resolve',
-            'vehicles.create',
-            'vehicles.update',
-            'vehicles.archive',
-            'vehicles.service',
-            'vehicles.service.update',
-            'files.upload',
-            'inspections.save',
-            'inspections.start',
-            'inspections.cancel',
-            'contracts.create',
-            'contracts.retry',
-            'contracts.sign',
-            'checkout.start',
-            'checkout.signAct',
-            'checkout.issue',
-            'rentalReturn.save',
-            'rentalReturn.start',
-            'rentalReturn.confirm',
-            'rentalReturn.correct',
-            'rentalReturn.damage',
-            'acts.generate',
-            'acts.retry',
-          ]),
+          command: commandName,
         })
         .strict(),
       query,

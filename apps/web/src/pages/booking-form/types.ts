@@ -13,8 +13,8 @@ export type ActionProps = {
   invoicePrompt?: 'now' | 'no-vehicle';
   visible?: boolean;
 };
+export type BookingFormMode = 'booking' | 'terms';
 export type BookingInitial = {
-  termsOnly?: boolean;
   target?: string;
   calculation?: Calculation;
   start?: string;

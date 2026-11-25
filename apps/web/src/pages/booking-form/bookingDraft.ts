@@ -1,7 +1,7 @@
 import { moscowMinuteToIso as iso, DAY_MS } from '../../shared/moscowTime';
 import type { Customer } from '../../catalog';
 import type { BookingOptions, Calculation } from '../../contracts';
-import type { BookingFormValues, BookingInitial } from './types';
+import type { BookingFormMode, BookingFormValues, BookingInitial } from './types';
 export const clean = (v: unknown) => String(v ?? '').trim();
 
 export function buildBookingDraft(
@@ -11,14 +11,16 @@ export function buildBookingDraft(
   selected: Customer | undefined,
   selecting: boolean,
   initial?: BookingInitial,
+  mode: BookingFormMode = 'booking',
 ) {
+  const termsOnly = mode === 'terms';
   const type = selected?.type ?? values.type ?? 'individual';
   const [existingTargetType, existingTargetId] = initial?.target?.split(':') ?? [];
   const existingTarget =
     existingTargetType && existingTargetId
       ? { type: existingTargetType, id: Number(existingTargetId) }
       : undefined;
-  const target = initial?.termsOnly
+  const target = termsOnly
     ? existingTarget
     : advanced
       ? values.advancedTarget
@@ -35,7 +37,7 @@ export function buildBookingDraft(
             ? { type: 'brand', id: values.brandId }
             : undefined;
   const assignedVehicle =
-    initial?.termsOnly && target?.type !== 'vehicle' && initial.vehicleId
+    termsOnly && target?.type !== 'vehicle' && initial?.vehicleId
       ? { vehicleId: initial.vehicleId }
       : {};
   let scheduleKey = '';
@@ -76,7 +78,7 @@ export function buildBookingDraft(
     hasFree = !!clean(values.freeDays),
     loyalty = hasOverrides || hasFree;
   const requiresVehicle =
-    !initial?.termsOnly &&
+    !termsOnly &&
     !advanced &&
     !values.modelId &&
     new Set(
@@ -100,7 +102,7 @@ export function buildBookingDraft(
     values.days > 0 &&
     values.days <= 3660 &&
     [100, 250, 400].includes(values.package) &&
-    (initial?.termsOnly ||
+    (termsOnly ||
       (customerComplete && phoneValid && !selecting && (!initial?.customerId || !!selected))) &&
     (!loyalty || !!clean(values.loyaltyReason));
   let draft:

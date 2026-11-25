@@ -29,6 +29,7 @@ import {
   VehicleTags,
 } from '../catalog';
 import { PlateInput, plateCanonical, platePattern } from '../formats';
+import { PageTitle } from '../shared/PageTitle';
 import ServiceRecords from './ServiceRecords';
 type VehicleFormValues = Partial<Omit<Vehicle, 'hasCasco'>> & {
   casco?: string;
@@ -308,7 +309,9 @@ export default function Fleet() {
     <section>
       <div className="page-heading">
         <div>
-          <Typography.Title level={2}>Автопарк</Typography.Title>
+          <PageTitle>
+            <Typography.Title level={2}>Автопарк</Typography.Title>
+          </PageTitle>
           <Typography.Text type="secondary">Автомобили, готовность и обслуживание</Typography.Text>
         </div>
         <Button type="primary" onClick={() => setCreating(true)}>
@@ -501,6 +504,9 @@ export function VehicleDetail() {
   if (!v)
     return (
       <>
+        <PageTitle mobileOnly>
+          <Typography.Title level={2}>Автомобиль</Typography.Title>
+        </PageTitle>
         <PollNotice {...poll} />
         {poll.loading ? 'Загрузка…' : null}
       </>
@@ -514,9 +520,11 @@ export function VehicleDetail() {
       <Link to={location.state?.back ?? '/fleet'}>← К автопарку</Link>
       <div className="page-heading">
         <div>
-          <Typography.Title level={2}>
-            {v.brandName} {v.modelName} · {v.plate}
-          </Typography.Title>
+          <PageTitle>
+            <Typography.Title level={2}>
+              {v.brandName} {v.modelName} · {v.plate}
+            </Typography.Title>
+          </PageTitle>
           <VehicleTags v={v} />
         </div>
         {!v.archivedAt && (

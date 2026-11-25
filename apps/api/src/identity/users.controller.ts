@@ -4,6 +4,7 @@ import { DatabaseService } from '../database.service';
 import { CommandsService } from '../platform/commands.service';
 import {
   AuthRequest,
+  MIN_PASSWORD_LENGTH,
   parse,
   newUserSchema,
   statusSchema,
@@ -42,7 +43,12 @@ export class UsersController {
       properties: {
         fullName: { type: 'string', maxLength: 120 },
         login: { type: 'string' },
-        password: { type: 'string', minLength: 12, maxLength: 128, format: 'password' },
+        password: {
+          type: 'string',
+          minLength: MIN_PASSWORD_LENGTH,
+          maxLength: 128,
+          format: 'password',
+        },
       },
     },
   })

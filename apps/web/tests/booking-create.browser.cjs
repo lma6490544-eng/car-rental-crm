@@ -95,6 +95,7 @@ async function runBookingScenario(invoiceOnly) {
     let availabilityChangedOnce = false;
     let availabilityRevision = 0;
     let refreshedPreviewGate;
+    const twoDayPreview = Promise.withResolvers();
     let accountingStatus = 'none';
     let accountingVehicleAssigned = false;
     let companyBooking = false;
@@ -167,6 +168,9 @@ async function runBookingScenario(invoiceOnly) {
         previews.push(body);
         const revision = availabilityRevision;
         if (availabilityScenario && revision === 1) await refreshedPreviewGate;
+        if (!invoiceOnly && body.pricing.contractDays === 2 && !availabilityScenario) {
+          await twoDayPreview.promise;
+        }
         if (body.pricing.contractDays === 3) {
           await new Promise((resolve) => setTimeout(resolve, 900));
         }
@@ -359,10 +363,20 @@ async function runBookingScenario(invoiceOnly) {
     await rentalStart.click();
     const rentalPicker = page.locator('.ant-picker-dropdown:visible');
     await rentalPicker.getByTitle('2026-11-19', { exact: true }).click();
+    const selectedDate = rentalPicker.locator('.ant-picker-cell-selected');
+    assert.equal(await selectedDate.getAttribute('title'), '2026-11-19');
+    // Complete the previous price calculation while the new date is still awaiting confirmation.
+    twoDayPreview.resolve();
+    await drawer
+      .locator('.booking-create-total strong')
+      .getByText(/^4\s400 ₽$/)
+      .waitFor();
+    assert.equal(await selectedDate.getAttribute('title'), '2026-11-19');
     const timeColumns = rentalPicker.locator('.ant-picker-time-panel-column');
     await timeColumns.nth(0).locator('[data-value="10"]').click();
     await timeColumns.nth(1).locator('[data-value="0"]').click();
     await rentalPicker.locator('.ant-picker-ok button').click();
+    assert.equal(await rentalStart.inputValue(), '19.11.2026, 10:00');
     const updatedPreview = page.waitForResponse(
       (response) =>
         response.url().endsWith('/bookings/preview') &&
@@ -696,9 +710,105 @@ async function runBookingScenario(invoiceOnly) {
       });
       const paymentCell = page.locator('.calendar-event');
       await bookingPayment.getByText('Не оплачено', { exact: true }).waitFor();
-      await paymentCell
-        .getByRole('img', { name: 'Не оплачено', exact: true })
-        .waitFor({ state: 'attached' });
+      assert.equal(await paymentCell.locator('.calendar-rent-payment-stripe').count(), 0);
+      const debtBadge = paymentCell.locator('.calendar-booking-debt-badge');
+      const debtRibbon = paymentCell.locator('.ant-ribbon.calendar-booking-debt-ribbon');
+      const debtAmount = debtRibbon.locator('.calendar-booking-debt-amount');
+      const compactDebtAmount = debtRibbon.locator('.calendar-booking-debt-compact');
+      const closeBookingCard = async () => {
+        await page.locator('.ant-drawer-close:visible').click();
+        await bookingPayment.waitFor({ state: 'hidden' });
+        await page.locator('.ant-drawer-mask:visible').waitFor({ state: 'hidden' });
+      };
+      const setCalendarCellWidth = (width) =>
+        paymentCell.evaluate((cell, width) => {
+          cell.style.setProperty('--event-width', width);
+          cell.closest('.calendar-grid').scrollLeft = cell.offsetLeft - 100;
+        }, width);
+      await closeBookingCard();
+      await setCalendarCellWidth('34px');
+      await debtBadge.waitFor();
+      assert.equal(await debtBadge.textContent(), '!');
+      assert.equal(await debtRibbon.isVisible(), false);
+      assert.deepEqual(
+        await debtBadge.locator('.ant-badge-count').evaluate((badge) => {
+          const bounds = badge.getBoundingClientRect();
+          const cell = badge.closest('.calendar-event').getBoundingClientRect();
+          const row = badge.closest('.calendar-track').getBoundingClientRect();
+          const date = badge.closest('.calendar-event').querySelector('.calendar-booking-start');
+          return {
+            width: bounds.width,
+            height: bounds.height,
+            outsideUpperRight: bounds.top < cell.top && bounds.right > cell.right,
+            outlineWithinRow: bounds.top - 2 >= row.top,
+            aboveDate: bounds.bottom <= date.getBoundingClientRect().bottom,
+          };
+        }),
+        { width: 16, height: 16, outsideUpperRight: true, outlineWithinRow: true, aboveDate: true },
+      );
+      await setCalendarCellWidth('150px');
+      await compactDebtAmount.waitFor();
+      assert.equal(await compactDebtAmount.innerText(), '2,2к ₽');
+      assert.deepEqual(
+        await debtRibbon.evaluate((ribbon) => {
+          const cell = ribbon.closest('.calendar-event');
+          const bounds = ribbon.getBoundingClientRect();
+          const cellBounds = cell.getBoundingClientRect();
+          const row = cell.closest('.calendar-track').getBoundingClientRect();
+          const badgeCount = cell.querySelector('.calendar-booking-debt-badge .ant-badge-count');
+          const outline = getComputedStyle(ribbon).boxShadow;
+          return {
+            fits: ribbon.scrollWidth <= ribbon.clientWidth,
+            outsideUpperRight: bounds.top < cellBounds.top && bounds.right > cellBounds.right,
+            outlineWithinRow: bounds.top - 2 >= row.top,
+            matchesBadgeOutline:
+              outline !== 'none' && outline === getComputedStyle(badgeCount).boxShadow,
+          };
+        }),
+        { fits: true, outsideUpperRight: true, outlineWithinRow: true, matchesBadgeOutline: true },
+      );
+      assert.equal(await debtAmount.isVisible(), false);
+      assert.equal(await debtBadge.isVisible(), false);
+      assert.equal(
+        await paymentCell
+          .locator('.calendar-booking-start')
+          .evaluate((tag) => tag.scrollWidth <= tag.clientWidth),
+        true,
+      );
+      await setCalendarCellWidth('300px');
+      await debtAmount.waitFor();
+      assert.match(await debtAmount.innerText(), /2\s200 ₽/);
+      assert.equal(await debtBadge.isVisible(), false);
+      assert.deepEqual(
+        await paymentCell.evaluate(async (cell) => {
+          const grid = cell.closest('.calendar-grid');
+          const row = cell.closest('.calendar-row');
+          const viewportWidth = grid.clientWidth - row.querySelector('.calendar-label').offsetWidth;
+          const ribbon = cell.querySelector('.calendar-booking-debt-ribbon');
+          const fullAmount = ribbon.querySelector('.calendar-booking-debt-amount');
+          const position = () =>
+            ribbon.getBoundingClientRect().right - cell.getBoundingClientRect().right;
+          const initialPosition = position();
+          const checks = [];
+          for (const scrollLeft of [cell.offsetLeft - viewportWidth + 140, cell.offsetLeft + 140]) {
+            grid.scrollLeft = scrollLeft;
+            checks.push(position() === initialPosition);
+            await new Promise(requestAnimationFrame);
+            checks.push(
+              position() === initialPosition && getComputedStyle(fullAmount).display !== 'none',
+            );
+          }
+          return checks;
+        }),
+        [true, true, true, true],
+      );
+      await setCalendarCellWidth('96px');
+      await debtBadge.hover({ position: { x: 14, y: 2 } });
+      await page
+        .getByRole('tooltip')
+        .getByText(/Осталось оплатить: 2\s200 ₽/)
+        .waitFor();
+      await paymentCell.click();
       await confirmPayment.click();
       const amount = paymentDialog.getByLabel('Сумма поступления, ₽');
       assert.equal(await amount.inputValue(), '2200');
@@ -716,18 +826,22 @@ async function runBookingScenario(invoiceOnly) {
         reference: '72',
       });
       assert.equal(checkoutStarted, false);
-      await paymentCell
-        .getByRole('img', { name: 'Оплачено частично' })
-        .waitFor({ state: 'attached' });
       await paymentDialog.waitFor({ state: 'hidden' });
+      await closeBookingCard();
+      await setCalendarCellWidth('96px');
+      await debtBadge.hover();
+      await page
+        .getByRole('tooltip')
+        .getByText(/Осталось оплатить: 1\s300 ₽/)
+        .waitFor();
+      await paymentCell.click();
       await confirmPayment.click();
       assert.equal(await amount.inputValue(), '1300');
       await paymentDialog.getByRole('button', { name: 'Подтвердить поступление' }).click();
       await bookingPayment.getByText('Оплачено', { exact: true }).waitFor();
       assert.equal(paymentCommands[1].expectedCoverageRub, '900');
-      await paymentCell
-        .getByRole('img', { name: 'Оплачено', exact: true })
-        .waitFor({ state: 'attached' });
+      assert.equal(await debtBadge.count(), 0);
+      assert.equal(await debtRibbon.count(), 0);
       assert.equal(checkoutStarted, false);
       await paymentDialog.waitFor({ state: 'hidden' });
       await page.getByRole('button', { name: 'Действия с бронью' }).click();
@@ -737,6 +851,11 @@ async function runBookingScenario(invoiceOnly) {
         .locator('.ant-collapse-header')
         .getByText('Оплачено', { exact: true })
         .waitFor();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.locator('.checkout-steps').waitFor({ state: 'hidden' });
+      const checkoutBounds = await page.locator('.checkout-layout').boundingBox();
+      const sectionBounds = await contractPayment.boundingBox();
+      assert.ok(checkoutBounds && sectionBounds && sectionBounds.width >= checkoutBounds.width - 2);
       await contractPayment.getByRole('tab', { name: /Оплата/ }).click();
       await contractPayment
         .getByRole('region', { name: 'Оплата аренды' })

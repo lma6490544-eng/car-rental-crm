@@ -1,5 +1,12 @@
 import BookingForm from '../booking-form/BookingForm';
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import {
   Alert,
   App as AntApp,
@@ -31,6 +38,7 @@ import { dateText, PollNotice } from '../../catalog';
 import { api, createIdempotencyKey, errorMessage } from '../../api';
 import { rub } from '../../shared/formatters';
 import { moscowDate } from '../../shared/moscowTime';
+import { PageTitle } from '../../shared/PageTitle';
 import CalendarGrid from './CalendarGrid';
 import { ProblemCard } from '../../features/booking/Conflicts';
 import './Calendar.css';
@@ -44,6 +52,20 @@ import { useCalendarState } from './useCalendarState';
 import { useCalendarMove } from './useCalendarMove';
 import { AccountingEmailNotice } from './AccountingEmailNotice';
 import type { CalendarPanel, CommandResult } from '../../contracts';
+
+const compactHeaderQuery = window.matchMedia(
+  '(max-width: 760px), (max-width: 960px) and (max-height: 540px)',
+);
+
+function subscribeToCompactHeader(onChange: () => void) {
+  compactHeaderQuery.addEventListener('change', onChange);
+  return () => compactHeaderQuery.removeEventListener('change', onChange);
+}
+
+function isCompactHeader() {
+  return compactHeaderQuery.matches;
+}
+
 export default function Calendar() {
   const { rentalId } = useParams();
   const navigate = useNavigate();
@@ -55,6 +77,7 @@ export default function Calendar() {
   const [createFooter, setCreateFooter] = useState<HTMLDivElement | null>(null);
   const [bookingHeading, setBookingHeading] = useState<BookingHeading>();
   const [locked, setLocked] = useState(false);
+  const compactHeader = useSyncExternalStore(subscribeToCompactHeader, isCompactHeader);
   const checkoutExit = useRef<CheckoutExitGuard>(null);
   const {
     p,
@@ -236,8 +259,38 @@ export default function Calendar() {
       : undefined;
   const activeFilters =
     Number(!!filter.trim()) + Number(statuses.length > 0) + Number(groupBy !== 'brand');
+  const todayButton = <Button onClick={goToday}>Сегодня</Button>;
+  const dateNavigation = (
+    <div className="calendar-date-navigation">
+      <Button
+        aria-label="Предыдущий месяц"
+        icon={<LeftOutlined />}
+        onClick={() => change('date', moscowDate(selectedDate - 30 * DAY))}
+      />
+      <DatePicker
+        id="calendar-date"
+        aria-label="Дата календаря"
+        format="DD.MM.YYYY"
+        value={dayjs(date)}
+        onChange={(v) => v && change('date', v.format('YYYY-MM-DD'))}
+        suffixIcon={<CalendarOutlined />}
+        allowClear={false}
+      />
+      <Button
+        aria-label="Следующий месяц"
+        icon={<RightOutlined />}
+        onClick={() => change('date', moscowDate(selectedDate + 30 * DAY))}
+      />
+    </div>
+  );
   const filters = (
     <div className="calendar-filter-content">
+      {compactHeader && (
+        <div className="calendar-filter-date">
+          <label htmlFor="calendar-date">Дата календаря</label>
+          {dateNavigation}
+        </div>
+      )}
       <label>
         Поиск по модели или госномеру
         <Input
@@ -254,7 +307,7 @@ export default function Calendar() {
           aria-label="Состояние автомобилей"
           mode="multiple"
           allowClear
-          getPopupContainer={(node) => node.parentElement!}
+          getPopupContainer={compactHeader ? undefined : (node) => node.parentElement!}
           optionFilterProp="label"
           placeholder="Все состояния"
           value={statuses}
@@ -284,7 +337,7 @@ export default function Calendar() {
         Масштаб
         <Select
           aria-label="Масштаб"
-          getPopupContainer={(node) => node.parentElement!}
+          getPopupContainer={compactHeader ? undefined : (node) => node.parentElement!}
           value={scale}
           onChange={(v) => change('scale', String(v))}
           options={[
@@ -307,32 +360,29 @@ export default function Calendar() {
         />
       ))}
       <header className="calendar-page-header">
-        <h1>График</h1>
-        <div className="calendar-navigation">
-          <Button
-            aria-label="Предыдущий месяц"
-            icon={<LeftOutlined />}
-            onClick={() => change('date', moscowDate(selectedDate - 30 * DAY))}
-          />
-          <DatePicker
-            aria-label="Дата календаря"
-            format="DD.MM.YYYY"
-            value={dayjs(date)}
-            onChange={(v) => v && change('date', v.format('YYYY-MM-DD'))}
-            suffixIcon={<CalendarOutlined />}
-            allowClear={false}
-          />
-          <Button
-            aria-label="Следующий месяц"
-            icon={<RightOutlined />}
-            onClick={() => change('date', moscowDate(selectedDate + 30 * DAY))}
-          />
-          <Button onClick={goToday}>Сегодня</Button>
-        </div>
+        <PageTitle>
+          <h1>График</h1>
+        </PageTitle>
+        {!compactHeader && (
+          <div className="calendar-navigation">
+            {dateNavigation}
+            {todayButton}
+          </div>
+        )}
         <div className="calendar-header-actions">
-          <Popover content={filters} trigger="click" placement="bottomRight" arrow={false}>
-            <Button icon={<FilterOutlined />}>
-              Фильтры{' '}
+          {compactHeader && todayButton}
+          <Popover
+            content={filters}
+            trigger="click"
+            placement={compactHeader ? 'bottom' : 'bottomRight'}
+            arrow={false}
+          >
+            <Button
+              className="calendar-filters-button"
+              aria-label="Фильтры"
+              icon={<FilterOutlined />}
+            >
+              <span className="calendar-action-label">Фильтры</span>
               {activeFilters > 0 && (
                 <Badge count={activeFilters} className="calendar-filter-badge" />
               )}
@@ -340,16 +390,37 @@ export default function Calendar() {
           </Popover>
           <Button
             className="calendar-problems-button"
+            aria-label={`Проблемы (${p.data?.problems.length ?? 0})`}
             danger={!!p.data?.problems.length}
-            icon={!!p.data?.problems.length ? <WarningOutlined /> : undefined}
+            icon={<WarningOutlined />}
             onClick={() => select({ kind: 'problems' })}
           >
-            Проблемы{' '}
+            <span className="calendar-action-label">Проблемы</span>
             {(p.data?.problems.length ?? 0) > 0 && <Badge count={p.data?.problems.length} />}
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => select({ kind: 'create' })}>
-            Бронь
-          </Button>
+          <ConfigProvider
+            theme={{
+              components: {
+                Button: {
+                  colorPrimary: '#1668DC',
+                  colorPrimaryHover: '#1A70E0',
+                  colorPrimaryActive: '#1257B8',
+                  colorPrimaryBorder: '#70A5F5',
+                  primaryColor: '#FFFFFF',
+                },
+              },
+            }}
+          >
+            <Button
+              className="calendar-create-booking-button"
+              type="primary"
+              aria-label="Бронь"
+              icon={<PlusOutlined />}
+              onClick={() => select({ kind: 'create' })}
+            >
+              {!compactHeader && 'Бронь'}
+            </Button>
+          </ConfigProvider>
         </div>
       </header>
       <PollNotice {...p} />
@@ -548,6 +619,7 @@ export default function Calendar() {
           >
             {panel?.kind === 'create' && (
               <BookingForm
+                mode="booking"
                 Action={Action}
                 key={JSON.stringify(panel)}
                 initial={panel}

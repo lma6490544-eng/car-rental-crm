@@ -48,6 +48,7 @@ test('Stage 1 browser acceptance', { timeout: 180000 }, async (t) => {
   pool = new Pool({ connectionString: baseUrl.toString() });
   await migrate(drizzle(pool), { migrationsFolder: path.join(root, 'apps/api/drizzle') });
   const password = 'Browser-' + randomBytes(18).toString('base64url');
+  const managerPassword = randomBytes(6).toString('base64url');
   await pool.query(
     "INSERT INTO users(full_name,login,password_hash,role) VALUES ('Администратор теста','admin',$1,'admin')",
     [await passwordHash(password)],
@@ -104,9 +105,9 @@ test('Stage 1 browser acceptance', { timeout: 180000 }, async (t) => {
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const output = path.join(root, '.runtime');
   await fs.mkdir(output, { recursive: true });
-  const login = async (p, account) => {
+  const login = async (p, account, accountPassword = password) => {
     await p.getByLabel('Логин', { exact: true }).fill(account);
-    await p.getByLabel('Пароль', { exact: true }).fill(password);
+    await p.getByLabel('Пароль', { exact: true }).fill(accountPassword);
     await p.getByRole('button', { name: 'Войти', exact: true }).click();
   };
   await t.test('unauthorized deep link, login and desktop layout', async () => {
@@ -126,10 +127,10 @@ test('Stage 1 browser acceptance', { timeout: 180000 }, async (t) => {
       await page.getByRole('button', { name: 'Добавить сотрудника' }).click();
       await page.getByLabel('ФИО', { exact: true }).fill('Тестовый менеджер');
       await page.getByLabel('Логин', { exact: true }).fill('manager');
-      await page.getByLabel('Пароль', { exact: true }).fill('short');
+      await page.getByLabel('Пароль', { exact: true }).fill(managerPassword.slice(0, 7));
       await page.getByRole('button', { name: 'Создать сотрудника', exact: true }).click();
-      await page.getByText('Не менее 12 символов.', { exact: true }).waitFor();
-      await page.getByLabel('Пароль', { exact: true }).fill(password);
+      await page.getByText('Не менее 8 символов.', { exact: true }).waitFor();
+      await page.getByLabel('Пароль', { exact: true }).fill(managerPassword);
       await page.route('**/api/v1/admin/users', async (route) => {
         if (route.request().method() === 'POST') {
           await route.fetch();
@@ -155,7 +156,7 @@ test('Stage 1 browser acceptance', { timeout: 180000 }, async (t) => {
       managerContext = await browser.newContext({ viewport: { width: 1024, height: 768 } });
       managerPage = await managerContext.newPage();
       await managerPage.goto(origin + '/users');
-      await login(managerPage, 'manager');
+      await login(managerPage, 'manager', managerPassword);
       await managerPage.getByText('Доступ ограничен', { exact: true }).waitFor();
       assert.equal(
         await managerPage.getByRole('link', { name: 'Сотрудники', exact: true }).count(),
@@ -167,7 +168,7 @@ test('Stage 1 browser acceptance', { timeout: 180000 }, async (t) => {
       await row.getByText('Заблокирован', { exact: true }).waitFor();
       await managerPage.reload();
       await managerPage.getByRole('heading', { name: 'Вход в систему' }).waitFor();
-      await login(managerPage, 'manager');
+      await login(managerPage, 'manager', managerPassword);
       await managerPage.getByText('Неверный логин или пароль.', { exact: true }).waitFor();
     },
   );

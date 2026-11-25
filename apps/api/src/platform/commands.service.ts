@@ -1,7 +1,54 @@
 import { Injectable } from '@nestjs/common';
+import { z } from 'zod';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../database.service';
 import { AuthRequest, fail, hash } from './security';
+
+export const commandName = z.enum([
+  'finance.post',
+  'schedule.update',
+  'bookings.create',
+  'bookings.accounting-email',
+  'bookings.terms',
+  'bookings.assign',
+  'bookings.move',
+  'bookings.cancel',
+  'schedule.create',
+  'schedule.cancel',
+  'pricing.quote',
+  'pricing.confirm',
+  'users.create',
+  'users.status',
+  'customers.create',
+  'customers.update',
+  'customers.block',
+  'customers.unblock',
+  'customers.note',
+  'customers.resolve',
+  'vehicles.create',
+  'vehicles.update',
+  'vehicles.archive',
+  'vehicles.service',
+  'vehicles.service.update',
+  'files.upload',
+  'inspections.save',
+  'inspections.start',
+  'inspections.cancel',
+  'contracts.create',
+  'contracts.retry',
+  'contracts.sign',
+  'checkout.start',
+  'checkout.signAct',
+  'checkout.issue',
+  'checkout.stop',
+  'rentalReturn.save',
+  'rentalReturn.start',
+  'rentalReturn.confirm',
+  'rentalReturn.correct',
+  'rentalReturn.damage',
+  'acts.generate',
+  'acts.retry',
+]);
 
 @Injectable()
 export class CommandsService {
@@ -24,7 +71,7 @@ export class CommandsService {
   }
   async run<T>(
     request: AuthRequest,
-    command: string,
+    command: z.infer<typeof commandName>,
     fingerprint: unknown,
     work: (client: PoolClient) => Promise<T>,
     admin = true,

@@ -5,6 +5,7 @@ import { Alert, Button, Card, Form, Select, Space } from 'antd';
 import { PollNotice, usePolling } from '../../catalog';
 import { fundNames } from './presentation';
 import { rub } from '../../shared/formatters';
+import { PageTitle } from '../../shared/PageTitle';
 import { MoneyEditor } from './MoneyEditor';
 import { ClientFinance } from './ClientFinance';
 import { Journal } from './Journal';
@@ -34,7 +35,9 @@ export default function Payments() {
   };
   return (
     <section>
-      <h1>Платежи</h1>
+      <PageTitle>
+        <h1>Платежи</h1>
+      </PageTitle>
       <PollNotice {...p} />
       <Space wrap>
         {p.data?.items.map((f) => (

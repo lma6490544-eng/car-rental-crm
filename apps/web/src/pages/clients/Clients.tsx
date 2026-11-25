@@ -15,6 +15,7 @@ import {
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { RentalHistory } from '../../features/booking/RentalHistory';
 import { History, PollNotice, useListScroll, usePolling } from '../../catalog';
+import { PageTitle } from '../../shared/PageTitle';
 import type { Customer } from '../../catalog';
 import { ClientFinance } from '../finance/ClientFinance';
 import { CustomerEditor } from '../../features/customers/CustomerEditor';
@@ -148,7 +149,9 @@ export default function Clients() {
     <section>
       <div className="page-heading">
         <div>
-          <Typography.Title level={2}>Клиенты</Typography.Title>
+          <PageTitle>
+            <Typography.Title level={2}>Клиенты</Typography.Title>
+          </PageTitle>
           <Typography.Text type="secondary">Физические лица и организации</Typography.Text>
         </div>
         <Button type="primary" onClick={() => setCreating(true)}>
@@ -242,6 +245,9 @@ export function ClientDetail() {
   if (!client)
     return (
       <>
+        <PageTitle mobileOnly>
+          <Typography.Title level={2}>Клиент</Typography.Title>
+        </PageTitle>
         <PollNotice {...poll} />
         {poll.loading ? 'Загрузка…' : null}
       </>
@@ -278,7 +284,9 @@ export function ClientDetail() {
       <Link to={location.state?.back ?? '/clients'}>← К списку клиентов</Link>
       <div className="page-heading">
         <div>
-          <Typography.Title level={2}>{client.displayName}</Typography.Title>
+          <PageTitle>
+            <Typography.Title level={2}>{client.displayName}</Typography.Title>
+          </PageTitle>
           <Space>
             {client.isBlocked && <Tag color="red">Заблокирован</Tag>}
             <Tag>{client.type === 'company' ? 'Организация' : 'Физическое лицо'}</Tag>

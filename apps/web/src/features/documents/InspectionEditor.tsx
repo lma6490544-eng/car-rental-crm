@@ -344,6 +344,7 @@ export function InspectionEditor({
   );
   let headerAction: ReactNode = (
     <Button
+      className="checkout-primary-button"
       type="primary"
       icon={<FileTextOutlined aria-hidden="true" />}
       disabled={!actGenerating && !canGenerate}
@@ -357,7 +358,12 @@ export function InspectionEditor({
   );
   if (work) {
     headerAction = ownWork ? (
-      <Button type="primary" disabled={locked || !editable} onClick={() => startEditing()}>
+      <Button
+        className="checkout-primary-button"
+        type="primary"
+        disabled={locked || !editable}
+        onClick={() => startEditing()}
+      >
         Продолжить осмотр
       </Button>
     ) : (
@@ -367,7 +373,12 @@ export function InspectionEditor({
     );
   } else if (!currentInspection) {
     headerAction = (
-      <Button type="primary" disabled={locked || !editable} onClick={() => startEditing()}>
+      <Button
+        className="checkout-primary-button"
+        type="primary"
+        disabled={locked || !editable}
+        onClick={() => startEditing()}
+      >
         Начать осмотр
       </Button>
     );
@@ -391,6 +402,7 @@ export function InspectionEditor({
           Отменить
         </Button>
         <Button
+          className="checkout-primary-button"
           type="primary"
           icon={<FileTextOutlined aria-hidden="true" />}
           disabled={!canSave}

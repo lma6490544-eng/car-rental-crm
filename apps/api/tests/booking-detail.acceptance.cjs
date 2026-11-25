@@ -61,7 +61,11 @@ test('Booking detail: compatible read model, one RR snapshot and no writes', asy
   const evaluate = s.evaluate.bind(s);
   s.evaluate = async (client, input, facts) => {
     assert.equal(client, rrClient);
-    assert.equal(facts, undefined, 'single-card inspection does not use Calendar indices');
+    assert.equal(
+      facts?.preparation,
+      undefined,
+      'single-card inspection does not use Calendar indices',
+    );
     const result = await evaluate(client, input, facts);
     evaluations.push({
       input: detailPayload(input),
@@ -247,7 +251,7 @@ test('Booking detail: compatible read model, one RR snapshot and no writes', asy
     assert.deepEqual(
       { value: actual.value, error: actual.error, evaluations: actual.evaluations },
       { value: expected.value, error: expected.error, evaluations: expected.evaluations },
-      'full JSON, errors, both evaluations and exact HMAC',
+      'full JSON, errors, the evaluation and exact HMAC',
     );
     const reads = (result) => result.trace.filter((x) => x.args[0].startsWith('SELECT'));
     assert.deepEqual(
@@ -271,7 +275,7 @@ test('Booking detail: compatible read model, one RR snapshot and no writes', asy
       if (error[0] === 404) assert.deepEqual(actual.trace.at(-1).args, ['ROLLBACK']);
     } else {
       assert.ok(actual.value);
-      assert.equal(actual.evaluations.length, 2);
+      assert.equal(actual.evaluations.length, 1);
       assert.deepEqual(
         actual.trace.filter((x) => x.scope === 'pool'),
         [],

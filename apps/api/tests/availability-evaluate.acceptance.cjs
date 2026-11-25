@@ -8,7 +8,7 @@ const { migrate } = require('drizzle-orm/node-postgres/migrator');
 const { referenceEvaluation, evaluationPayload } = require('./helpers/evaluate-reference.cjs');
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env'), quiet: true });
 
-test('Availability endpoint: frozen orchestration, both solver contexts and RR', async (t) => {
+test('Availability endpoint: frozen orchestration, one solver pass and RR', async (t) => {
   const name = 'crm_evaluate_test_' + randomBytes(8).toString('hex');
   const url = new URL(process.env.DATABASE_URL);
   const admin = new Pool({ connectionString: url.toString() });
@@ -78,8 +78,12 @@ test('Availability endpoint: frozen orchestration, both solver contexts and RR',
   });
   const evaluate = s.evaluate.bind(s);
   s.evaluate = async (client, input, facts) => {
-    assert.equal(client, activeClient, 'one transaction client for both contexts');
-    assert.equal(facts, undefined, 'no Calendar request indices for a single evaluate');
+    assert.equal(client, activeClient, 'one transaction client');
+    assert.equal(
+      facts?.preparation,
+      undefined,
+      'no Calendar request indices for a single evaluate',
+    );
     const result = await evaluate(client, input, facts);
     evaluations.push(evaluationPayload({ input, result }));
     return result;
@@ -196,19 +200,13 @@ test('Availability endpoint: frozen orchestration, both solver contexts and RR',
         ['SET TRANSACTION ISOLATION LEVEL REPEATABLE READ'],
       ]);
       assert.deepEqual(actual.trace.at(-1), ['COMMIT']);
-      assert.equal(actual.evaluations.length, 2);
-      assert.equal(actual.solvers.length, 2);
+      assert.equal(actual.evaluations.length, 1);
+      assert.equal(actual.solvers.length, 1);
       assert.equal(
         actual.trace.filter(([sql]) => sql.startsWith('SELECT id,model_id,is_ready,version'))
           .length,
-        2,
+        1,
       );
-      const primary = actual.evaluations[0].input;
-      assert.deepEqual(actual.evaluations[1].input, {
-        ...primary,
-        target: { type: 'model', id: primary.models[0] },
-        vehicleId: null,
-      });
       assert.match(actual.value.token, /^[a-f0-9]{64}$/);
     }
     assert.deepEqual(await snapshot(), before, 'all public tables unchanged, including errors');
@@ -263,13 +261,13 @@ test('Availability endpoint: frozen orchestration, both solver contexts and RR',
       ])
         assert.equal((await compare(input(type, id))).status, 'feasible');
       const old = await booking(
-        '2080-01-01',
-        '2080-01-03',
+        '2080-01-01T00:00:00Z',
+        '2080-01-03T00:00:00Z',
         [models[0]],
         'equivalence_group',
         analogs,
       );
-      const assignment = await block('2080-01-01', '2080-01-03', old.id);
+      const assignment = await block('2080-01-01T00:00:00Z', '2080-01-03T00:00:00Z', old.id);
       const saved = await compare(
         input('equivalence_group', analogs, { bookingId: old.id, vehicleId: cars[0] }),
       );
@@ -334,9 +332,9 @@ test('Availability endpoint: frozen orchestration, both solver contexts and RR',
     await db.pool.query("UPDATE vehicles SET is_ready=true,readiness_reason='' WHERE id=$1", [
       cars[0],
     ]);
-    const adjacent = await block('2080-01-03', '2080-01-04');
+    const adjacent = await block('2080-01-03T00:00:00Z', '2080-01-04T00:00:00Z');
     assert.equal((await compare(input())).status, 'feasible');
-    const inside = await block('2080-01-02T23:00:00Z', '2080-01-03');
+    const inside = await block('2080-01-02T23:00:00Z', '2080-01-03T00:00:00Z');
     const blocked = await compare(input());
     assert.equal(blocked.status, 'deficit');
     assert.deepEqual(
@@ -351,15 +349,15 @@ test('Availability endpoint: frozen orchestration, both solver contexts and RR',
     'assigned/unassigned demands, intersecting pools outside window, empty candidates and unknown',
     async () => {
       const a = await booking(
-        '2080-01-02',
-        '2080-01-05',
+        '2080-01-02T00:00:00Z',
+        '2080-01-05T00:00:00Z',
         models.slice(0, 2),
         'equivalence_group',
         analogs,
       );
-      const b = await booking('2080-01-04', '2080-01-06', [models[1]]);
-      const c = await booking('2080-01-04', '2080-01-06', [models[0]]);
-      const assignment = await block('2080-01-04', '2080-01-06', b.id, cars[1]);
+      const b = await booking('2080-01-04T00:00:00Z', '2080-01-06T00:00:00Z', [models[1]]);
+      const c = await booking('2080-01-04T00:00:00Z', '2080-01-06T00:00:00Z', [models[0]]);
+      const assignment = await block('2080-01-04T00:00:00Z', '2080-01-06T00:00:00Z', b.id, cars[1]);
       const deficit = await compare(input('model', models[0]));
       assert.equal(deficit.status, 'deficit');
       assert.deepEqual(deficit.bookingIds, [0, a.id, b.id, c.id]);
@@ -378,7 +376,7 @@ test('Availability endpoint: frozen orchestration, both solver contexts and RR',
       ]);
       const chain = (
         await db.pool.query(
-          "INSERT INTO bookings(customer_id,start_at,end_at,target_type,target_model_id,created_by) SELECT $1,'2082-01-01'::timestamptz+n*interval '1 day','2082-01-01'::timestamptz+(n+2)*interval '1 day','model',$2,$3 FROM generate_series(1,501) n RETURNING id",
+          "INSERT INTO bookings(customer_id,start_at,end_at,target_type,target_model_id,created_by) SELECT $1,'2082-01-01T00:00:00Z'::timestamptz+n*interval '1 day','2082-01-01T00:00:00Z'::timestamptz+(n+2)*interval '1 day','model',$2,$3 FROM generate_series(1,501) n RETURNING id",
           [customer, models[0], actor],
         )
       ).rows.map((row) => row.id);
@@ -398,7 +396,7 @@ test('Availability endpoint: frozen orchestration, both solver contexts and RR',
     },
   );
   await t.test(
-    'concurrent commit between both evaluations remains outside the RR snapshot',
+    'concurrent commit while loading alternative labels remains outside the RR snapshot',
     async () => {
       const body = input('vehicle', cars[0], {
         startAt: '2084-01-01T00:00:00Z',
@@ -412,7 +410,7 @@ test('Availability endpoint: frozen orchestration, both solver contexts and RR',
         afterQuery = async (sql) => {
           if (!sql.startsWith('SELECT v.id,v.model_id AS')) return;
           afterQuery = undefined;
-          inserted = await block('2084-01-01', '2084-01-02');
+          inserted = await block('2084-01-01T00:00:00Z', '2084-01-02T00:00:00Z');
         };
         try {
           const concurrent = await outcome(owner, body);
@@ -427,9 +425,10 @@ test('Availability endpoint: frozen orchestration, both solver contexts and RR',
           const fresh = await outcome(owner, body);
           assert.equal(fresh.value.status, 'deficit');
           assert.notEqual(fresh.value.token, stable.token);
-          assert.notEqual(
-            fresh.evaluations[1].result.token,
-            concurrent.evaluations[1].result.token,
+          assert.deepEqual(fresh.value.alternatives, []);
+          assert.deepEqual(
+            concurrent.value.alternatives.map((v) => v.id),
+            [cars[0]],
           );
         } finally {
           afterQuery = undefined;

@@ -1,5 +1,16 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { Alert, App as AntApp, Avatar, Button, Dropdown, Layout, Menu, Result, Spin } from 'antd';
+import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react';
+import {
+  Alert,
+  App as AntApp,
+  Avatar,
+  Button,
+  Drawer,
+  Dropdown,
+  Layout,
+  Menu,
+  Result,
+  Spin,
+} from 'antd';
 import {
   CalculatorOutlined,
   CalendarOutlined,
@@ -8,6 +19,7 @@ import {
   HomeOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
+  MenuOutlined,
   MenuUnfoldOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -17,6 +29,8 @@ import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router
 import { useAuth } from './auth';
 import { errorMessage } from './api';
 import { useTheme } from './theme';
+import { InputTooltip, TouchInputContext } from './shared/InputTooltip';
+import { MobileMenuTriggerContext, PageTitle } from './shared/PageTitle';
 const Settings = lazy(() => import('./pages/Settings'));
 const Login = lazy(() => import('./pages/Login'));
 const Home = lazy(() => import('./pages/Home'));
@@ -32,6 +46,17 @@ const Payments = lazy(() => import('./pages/finance/Finance'));
 const VehicleDetail = lazy(() =>
   import('./pages/Fleet').then((m) => ({ default: m.VehicleDetail })),
 );
+const mobileNavigationQuery = window.matchMedia('(max-width: 760px)');
+
+function subscribeToMobileNavigation(onChange: () => void) {
+  mobileNavigationQuery.addEventListener('change', onChange);
+  return () => mobileNavigationQuery.removeEventListener('change', onChange);
+}
+
+function isMobileNavigation() {
+  return mobileNavigationQuery.matches;
+}
+
 function Wait() {
   return (
     <div className="loading-view" role="status">
@@ -47,8 +72,16 @@ function Shell() {
   const { message } = AntApp.useApp();
   const [leaving, setLeaving] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const rentalRoute = location.pathname.startsWith('/rentals/');
-  const calendarLayout = location.pathname === '/calendar' || rentalRoute;
+  const [touchInput, setTouchInput] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const isMobile = useSyncExternalStore(subscribeToMobileNavigation, isMobileNavigation);
+  const calendarLayout =
+    location.pathname === '/calendar' || location.pathname.startsWith('/rentals/');
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [isMobile, location.key]);
+
   if (!auth.user)
     return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   const logout = async () => {
@@ -61,80 +94,80 @@ function Shell() {
       setLeaving(false);
     }
   };
-  return (
-    <Layout className="app-shell">
-      <Layout.Sider
-        width={232}
-        collapsedWidth={64}
-        breakpoint="md"
-        onBreakpoint={setCollapsed}
-        collapsible
-        collapsed={collapsed}
-        onCollapse={setCollapsed}
-        trigger={null}
-        className="sidebar"
-      >
-        <Link to="/" className="sidebar-brand">
-          <span className="brand-mark small">А</span>
-          <span>
-            Автолига<small>Прокат автомобилей</small>
-          </span>
-        </Link>
-        <Menu
-          theme={mode}
-          mode="inline"
-          selectedKeys={[rentalRoute ? '/calendar' : '/' + location.pathname.split('/')[1]]}
-          items={[
-            { key: '/', icon: <HomeOutlined />, label: <Link to="/">Главная</Link> },
-            {
-              key: '/calendar',
-              icon: <CalendarOutlined />,
-              label: <Link to="/calendar">График</Link>,
-            },
-            { key: '/clients', icon: <TeamOutlined />, label: <Link to="/clients">Клиенты</Link> },
-            { key: '/fleet', icon: <CarOutlined />, label: <Link to="/fleet">Автопарк</Link> },
-            {
-              key: '/pricing',
-              icon: <CalculatorOutlined />,
-              label: <Link to="/pricing">Расчёт цены</Link>,
-            },
-            {
-              key: '/payments',
-              icon: <CreditCardOutlined />,
-              label: <Link to="/payments">Платежи</Link>,
-            },
-            ...(auth.user.role === 'admin'
-              ? [
-                  {
-                    key: '/users',
-                    icon: <UserOutlined />,
-                    label: <Link to="/users">Пользователи</Link>,
-                  },
-                ]
-              : []),
-            {
-              key: '/settings',
-              icon: <SettingOutlined />,
-              label: <Link to="/settings">Настройки</Link>,
-            },
-          ]}
-        />
-        <div className="sidebar-bottom">
-          <Dropdown
-            trigger={['click']}
-            menu={{
-              items: [
-                { key: 'logout', icon: <LogoutOutlined />, label: 'Выйти', disabled: leaving },
-              ],
-              onClick: () => void logout(),
-            }}
-          >
-            <button className="sidebar-profile" aria-label="Профиль пользователя">
-              <Avatar size="small">{auth.user.fullName.slice(0, 1)}</Avatar>
-              <span className="sidebar-profile-name">{auth.user.fullName}</span>
-              <span className="sidebar-profile-more">⌄</span>
-            </button>
-          </Dropdown>
+  const navigation = (
+    <>
+      <Link to="/" className="sidebar-brand">
+        <span className="brand-mark small">А</span>
+        <span>
+          Автолига<small>Прокат автомобилей</small>
+        </span>
+      </Link>
+      <Menu
+        theme={mode}
+        mode="inline"
+        selectedKeys={[
+          location.pathname.startsWith('/rentals/')
+            ? '/calendar'
+            : '/' + location.pathname.split('/')[1],
+        ]}
+        items={[
+          { key: '/', icon: <HomeOutlined />, label: 'Главная' },
+          {
+            key: '/calendar',
+            icon: <CalendarOutlined />,
+            label: 'График',
+          },
+          { key: '/clients', icon: <TeamOutlined />, label: 'Клиенты' },
+          { key: '/fleet', icon: <CarOutlined />, label: 'Автопарк' },
+          {
+            key: '/pricing',
+            icon: <CalculatorOutlined />,
+            label: 'Расчёт цены',
+          },
+          {
+            key: '/payments',
+            icon: <CreditCardOutlined />,
+            label: 'Платежи',
+          },
+          ...(auth.user.role === 'admin'
+            ? [
+                {
+                  key: '/users',
+                  icon: <UserOutlined />,
+                  label: 'Пользователи',
+                },
+              ]
+            : []),
+          {
+            key: '/settings',
+            icon: <SettingOutlined />,
+            label: 'Настройки',
+          },
+        ].map((item) => ({
+          ...item,
+          title: '',
+          label: (
+            <InputTooltip placement="right" title={!isMobile && collapsed ? item.label : null}>
+              <Link to={item.key}>{item.label}</Link>
+            </InputTooltip>
+          ),
+        }))}
+      />
+      <div className="sidebar-bottom">
+        <Dropdown
+          trigger={['click']}
+          menu={{
+            items: [{ key: 'logout', icon: <LogoutOutlined />, label: 'Выйти', disabled: leaving }],
+            onClick: () => void logout(),
+          }}
+        >
+          <button className="sidebar-profile" aria-label="Профиль пользователя">
+            <Avatar size="small">{auth.user.fullName.slice(0, 1)}</Avatar>
+            <span className="sidebar-profile-name">{auth.user.fullName}</span>
+            <span className="sidebar-profile-more">⌄</span>
+          </button>
+        </Dropdown>
+        {!isMobile && (
           <Button
             className="sidebar-collapse"
             type="text"
@@ -142,9 +175,55 @@ function Shell() {
             aria-label={collapsed ? 'Развернуть меню' : 'Свернуть меню'}
             onClick={() => setCollapsed((v) => !v)}
           />
-        </div>
-      </Layout.Sider>
-      <Layout>
+        )}
+      </div>
+    </>
+  );
+  const mobileMenuTrigger = isMobile ? (
+    <Button
+      className="mobile-menu-trigger"
+      type="text"
+      icon={<MenuOutlined aria-hidden="true" />}
+      aria-label="Меню"
+      aria-haspopup="dialog"
+      aria-expanded={mobileMenuOpen}
+      onClick={() => setMobileMenuOpen(true)}
+    />
+  ) : null;
+  return (
+    <TouchInputContext.Provider value={touchInput}>
+      <Layout
+        className="app-shell"
+        onPointerOverCapture={(event) => setTouchInput(event.pointerType === 'touch')}
+        onPointerDownCapture={(event) => setTouchInput(event.pointerType === 'touch')}
+        onKeyDownCapture={() => setTouchInput(false)}
+      >
+        {isMobile ? (
+          <Drawer
+            className="sidebar mobile-navigation"
+            title="Меню"
+            placement="left"
+            width={280}
+            open={mobileMenuOpen}
+            onClose={() => setMobileMenuOpen(false)}
+          >
+            {navigation}
+          </Drawer>
+        ) : (
+          <Layout.Sider
+            width={232}
+            collapsedWidth={64}
+            breakpoint={calendarLayout ? 'lg' : 'md'}
+            onBreakpoint={setCollapsed}
+            collapsible
+            collapsed={collapsed}
+            onCollapse={setCollapsed}
+            trigger={null}
+            className="sidebar"
+          >
+            {navigation}
+          </Layout.Sider>
+        )}
         <Layout.Content className={'app-content' + (calendarLayout ? ' app-content-calendar' : '')}>
           {auth.error && (
             <Alert
@@ -155,10 +234,12 @@ function Shell() {
               action={<Button onClick={() => void auth.reload()}>Повторить</Button>}
             />
           )}
-          <Outlet />
+          <MobileMenuTriggerContext.Provider value={mobileMenuTrigger}>
+            <Outlet />
+          </MobileMenuTriggerContext.Provider>
         </Layout.Content>
       </Layout>
-    </Layout>
+    </TouchInputContext.Provider>
   );
 }
 function AdminOnly() {
@@ -168,7 +249,11 @@ function AdminOnly() {
   ) : (
     <Result
       status="403"
-      title="Доступ ограничен"
+      title={
+        <PageTitle>
+          <span>Доступ ограничен</span>
+        </PageTitle>
+      }
       subTitle="Управление сотрудниками доступно администратору."
       extra={
         <Link to="/">
@@ -233,7 +318,11 @@ export default function App() {
               element={
                 <Result
                   status="404"
-                  title="Страница не найдена"
+                  title={
+                    <PageTitle>
+                      <span>Страница не найдена</span>
+                    </PageTitle>
+                  }
                   extra={
                     <Link to="/">
                       <Button>На главную</Button>

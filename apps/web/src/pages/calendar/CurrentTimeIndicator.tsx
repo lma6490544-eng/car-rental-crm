@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DAY_MS, moscowDateTimeInput, moscowDayStart } from '../../shared/moscowTime';
 
 const DAY_MINUTES = 24 * 60;
-const VEHICLE_COLUMN_WIDTH = 260;
 
 type CurrentTimeIndicatorProps = {
   from: number;
@@ -37,14 +36,15 @@ export default function CurrentTimeIndicator({ from, to, dayWidth }: CurrentTime
     const layer = layerRef.current;
     const scroller = layer?.closest<HTMLElement>('.calendar-grid');
     if (!layer || !scroller) return;
-    const updateClip = () => {
-      const clip = `inset(${scroller.scrollTop + 46}px 0 0 ${scroller.scrollLeft + VEHICLE_COLUMN_WIDTH}px)`;
+    // The sticky header covers the line while the dot stays above it during vertical scrolling.
+    const updateHorizontalClip = () => {
+      const clip = `inset(0 0 0 calc(${scroller.scrollLeft}px + var(--calendar-label-width)))`;
       layer.style.clipPath = clip;
       if (markerLayerRef.current) markerLayerRef.current.style.clipPath = clip;
     };
-    updateClip();
-    scroller.addEventListener('scroll', updateClip, { passive: true });
-    return () => scroller.removeEventListener('scroll', updateClip);
+    updateHorizontalClip();
+    scroller.addEventListener('scroll', updateHorizontalClip, { passive: true });
+    return () => scroller.removeEventListener('scroll', updateHorizontalClip);
   }, []);
 
   useEffect(() => {
@@ -68,13 +68,14 @@ export default function CurrentTimeIndicator({ from, to, dayWidth }: CurrentTime
   const visible = clock.dayStart >= from && clock.dayStart < to;
 
   const dayIndex = (clock.dayStart - from) / DAY_MS;
-  const left = VEHICLE_COLUMN_WIDTH + (dayIndex + clock.minutes / DAY_MINUTES) * dayWidth;
+  const timeOffset = (dayIndex + clock.minutes / DAY_MINUTES) * dayWidth;
+  const left = `calc(var(--calendar-label-width) + ${timeOffset}px)`;
 
   // Sticky group headers paint their own continuation above their opaque background.
   useLayoutEffect(() => {
     const content = layerRef.current?.parentElement;
     if (!content) return;
-    content.style.setProperty('--current-time-left', visible ? `${left}px` : '-20px');
+    content.style.setProperty('--current-time-left', visible ? left : '-20px');
     return (): void => {
       content.style.removeProperty('--current-time-left');
     };

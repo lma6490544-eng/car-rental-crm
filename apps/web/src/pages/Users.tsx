@@ -13,6 +13,7 @@ import {
   Typography,
 } from 'antd';
 import { api, ApiError, errorMessage, type User } from '../api';
+import { PageTitle } from '../shared/PageTitle';
 type NewUser = { fullName: string; login: string; password: string };
 type Pending = { key: string; body: NewUser };
 export default function Users() {
@@ -145,7 +146,9 @@ export default function Users() {
     <section>
       <div className="page-heading">
         <div>
-          <Typography.Title level={2}>Сотрудники</Typography.Title>
+          <PageTitle>
+            <Typography.Title level={2}>Сотрудники</Typography.Title>
+          </PageTitle>
           <Typography.Text type="secondary">Учётные записи и доступ к системе</Typography.Text>
         </div>
         <Button
@@ -292,7 +295,7 @@ export default function Users() {
             label="Пароль"
             rules={[
               { required: true, message: 'Укажите пароль.' },
-              { min: 12, message: 'Не менее 12 символов.' },
+              { min: 8, message: 'Не менее 8 символов.' },
               { max: 128 },
             ]}
           >

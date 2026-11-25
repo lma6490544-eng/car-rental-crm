@@ -23,7 +23,7 @@ const palettes = {
     muted: '#9BAABD',
     border: '#26384A',
     accent: '#E8C477',
-    selected: '#3B392F',
+    selected: '#282D2C',
   },
   light: {
     background: '#F4F6F8',
@@ -76,13 +76,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
             fontFamily: 'Inter, Segoe UI, sans-serif',
           },
           components: {
-            Layout: { bodyBg: p.background, siderBg: p.surface },
+            Layout: { bodyBg: p.background, siderBg: 'transparent' },
             Menu: {
-              itemBg: p.surface,
+              itemBg: 'transparent',
+              activeBarBorderWidth: 0,
               itemSelectedBg: p.selected,
               itemSelectedColor: p.accent,
               itemHoverBg: mode === 'dark' ? '#1A2A3B' : '#EFF3F7',
-              darkItemBg: p.surface,
+              darkItemBg: 'transparent',
               darkItemSelectedBg: p.selected,
               darkItemSelectedColor: p.accent,
               darkItemHoverBg: '#1A2A3B',
